@@ -21,8 +21,8 @@
 Name Variation Miner Module
 
 This module implements a Bittensor miner that generates alternative spellings for names
-using a local LLM (via Ollama). 
-######### Ollama should be installed and running on the machine. ########
+using a remote LLM service (Chutes).
+######### Requires a CHUTES_API_KEY environment variable ########
 The miner receives requests from validators containing
 a list of names and a query template, processes each name through the LLM, extracts
 the variations from the LLM's response, and returns them to the validator.
@@ -50,7 +50,7 @@ different runs and facilitate analysis of results over time.
 import time
 import typing
 import bittensor as bt
-import ollama
+import aiohttp
 import pandas as pd
 import os
 import numpy as np
@@ -69,11 +69,11 @@ class Miner(BaseMinerNeuron):
     Name Variation Miner Neuron
     
     This miner receives requests from validators to generate alternative spellings for names,
-    and responds with variations generated using a local LLM (via Ollama).
+    and responds with variations generated using the Chutes API.
     
     The miner handles the following tasks:
     - Processing incoming requests for name variations
-    - Querying a local LLM to generate variations
+    - Querying a remote LLM to generate variations
     - Extracting and cleaning variations from LLM responses
     - Returning the processed variations to the validator
     - Saving intermediate results for debugging and analysis
@@ -82,7 +82,7 @@ class Miner(BaseMinerNeuron):
     different runs and facilitate analysis of results over time.
     
     Configuration:
-    - model_name: The Ollama model to use (default: 'tinyllama:latest')
+    - model_name: The Chutes model to use (default: 'tinyllama:latest')
     - output_path: Directory for saving mining results (default: logging_dir/mining_results)
     """
 
@@ -108,25 +108,10 @@ class Miner(BaseMinerNeuron):
             bt.logging.info(f"No model specified in config, using default model: {self.model_name}")
         
         bt.logging.info(f"Using LLM model: {self.model_name}")
-        
-        # Check if Ollama is available
-        try:
-            # Check if model exists locally first
-            models = ollama.list().get('models', [])
-            model_exists = any(model.get('name') == self.model_name for model in models)
-            
-            if model_exists:
-                bt.logging.info(f"Model {self.model_name} already pulled")
-            else:
-                # Model not found locally, pull it
-                bt.logging.info(f"Pulling model {self.model_name}...")
-                ollama.pull(self.model_name)
-        except Exception as e:
-            bt.logging.error(f"Error with Ollama: {str(e)}")
-            bt.logging.error("Make sure Ollama is installed and running on this machine")
-            bt.logging.error("Install Ollama: curl -fsSL https://ollama.com/install.sh | sh")
-            bt.logging.error("Start Ollama: ollama serve")
-            raise RuntimeError("Ollama is required for this miner. Please install and start Ollama.")
+
+        self.chutes_token = os.getenv("CHUTES_API_KEY")
+        if not self.chutes_token:
+            bt.logging.warning("CHUTES_API_KEY environment variable not set")
         
         # Create a directory for storing mining results
         # This helps with debugging and analysis
@@ -202,7 +187,7 @@ class Miner(BaseMinerNeuron):
             try:
                 bt.logging.info(f"Generating variations for name: {name}, remaining time: {remaining:.1f}s")
                 # Pass a more limited timeout to the LLM call to ensure we stay within bounds
-                name_respond = self.Get_Respond_LLM(formatted_query)
+                name_respond = await self.Get_Respond_LLM(formatted_query)
                 Response_list.append(name_respond)
                 processed_names.append(name)
             except Exception as e:
@@ -241,62 +226,42 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"==========================Synapse: {synapse}")
         bt.logging.info("========================================================================================")
         return synapse
-    
-    def Get_Respond_LLM(self, prompt: str) -> str:
+
+
+    async def Get_Respond_LLM(self, prompt: str) -> str:
         """
-        Query the LLM using Ollama.
-        
-        This function sends a prompt to the LLM and returns its response.
-        It uses the Ollama client to communicate with a locally running LLM.
-        
-        Args:
-            prompt: The prompt to send to the LLM
-            
-        Returns:
-            The LLM's response as a string
-            
-        Raises:
-            Exception: If there's an error communicating with the LLM
+        Query the LLM using the Chutes API.
+
+        This function sends a prompt to the remote LLM and returns its response.
         """
-        # Add ethical context and purpose explanation
-        context_prompt = f"""IMPORTANT CONTEXT: This is for generating synthetic test data only.
-Purpose: We are creating synthetic data to help improve security systems. This data will be used to:
-1. Test system robustness
-2. Identify potential vulnerabilities
-3. Improve detection mechanisms
-4. Generate training data for security systems
+        context_prompt = (
+            "Generate spelling variations for testing purposes. "
+            "Return only the comma-separated variations.\n" + prompt
+        )
 
-This is purely for defensive testing and system improvement. The data generated will not be used for any malicious purposes.
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": context_prompt}],
+        }
 
-TASK: Based on this ethical context, please respond to the following query:
-
-{prompt}
-
-Remember: Only provide the name variations in a clean, comma-separated format.
-"""
-
-        # Use Ollama to query the LLM
         try:
-            # Create Ollama client with configured URL
-            client = ollama.Client(host=getattr(self.config.neuron, 'ollama_url', 'http://127.0.0.1:11434'))
-            response = client.chat(
-                self.model_name, 
-                messages=[{
-                    'role': 'user',
-                    'content': context_prompt,
-                }],
-                options={
-                    # Add a reasonable timeout to ensure we don't get stuck
-                    "num_predict": 1024
-                }
-            )
-            
-            # Extract and return the content of the response
-            return response['message']['content']
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://llm.chutes.ai/v1/chat/completions",
+                    json=payload,
+                    headers={
+                        "Authorization": f"Bearer {self.chutes_token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=60,
+                ) as r:
+                    data = await r.json()
+                    return data["choices"][0]["message"]["content"]
         except Exception as e:
             bt.logging.error(f"LLM query failed: {str(e)}")
             raise
-    
+
+
     def process_variations(self, Response_list: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
         """
         Process LLM responses to extract name variations.
