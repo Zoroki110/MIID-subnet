@@ -31,6 +31,10 @@ import random
 # Import rule_evaluator for rule-based compliance checking
 from MIID.validator.rule_evaluator import evaluate_rule_compliance
 
+# Import performance optimizations
+from MIID.utils.performance import lru_cache_with_ttl, performance_timer, BatchProcessor
+from MIID.utils.error_handling import with_error_handling, MIIDValidationError
+
 # Define the reward component weights globally
 MIID_REWARD_WEIGHTS = {
     ##### Quality based similarity weights (phonetic and orthographic similarity)
@@ -46,6 +50,7 @@ MIID_REWARD_WEIGHTS = {
     "last_name_weight": 0.7
 }
 
+@with_error_handling(MIIDValidationError, default_return=0.0)
 def reward(query: int, response: int) -> float:
     """
     Reward the miner response to the dummy request. This method returns a reward
@@ -60,37 +65,77 @@ def reward(query: int, response: int) -> float:
     return 1.0 if response == query * 2 else 0
 
 
+# Cache phonetic algorithm results for 1 hour
+@lru_cache_with_ttl(max_size=1000, ttl_seconds=3600)
+def _cached_phonetic_algorithm(algorithm_name: str, text: str) -> str:
+    """Cache individual phonetic algorithm results."""
+    algorithms = {
+        "soundex": jellyfish.soundex,
+        "metaphone": jellyfish.metaphone,
+        "nysiis": jellyfish.nysiis,
+    }
+    
+    if algorithm_name in algorithms:
+        try:
+            return algorithms[algorithm_name](text)
+        except Exception as e:
+            bt.logging.warning(f"Error computing {algorithm_name} for '{text}': {e}")
+            return ""
+    return ""
+
+
+@performance_timer("phonetic_similarity")
+@with_error_handling(Exception, default_return=0.0)
 def calculate_phonetic_similarity(original_name: str, variation: str) -> float:
     """
     Calculate phonetic similarity between two strings using a randomized subset of phonetic algorithms.
     This makes it harder for miners to game the system by not knowing which algorithms will be used.
     The selection and weighting are deterministic for each original_name.
+    
+    Performance optimized with caching and error handling.
     """
+    if not original_name or not variation:
+        return 0.0
+    
+    # Clean inputs
+    original_clean = original_name.strip().lower()
+    variation_clean = variation.strip().lower()
+    
+    if original_clean == variation_clean:
+        return 1.0
+    
     # Define available phonetic algorithms
-    algorithms = {
-        "soundex": lambda x, y: jellyfish.soundex(x) == jellyfish.soundex(y),
-        "metaphone": lambda x, y: jellyfish.metaphone(x) == jellyfish.metaphone(y),
-        "nysiis": lambda x, y: jellyfish.nysiis(x) == jellyfish.nysiis(y),
-        # Add more algorithms if needed
-    }
+    available_algorithms = ["soundex", "metaphone", "nysiis"]
 
     # Deterministically seed the random selection based on the original name
     random.seed(hash(original_name) % 10000)
-    selected_algorithms = random.sample(list(algorithms.keys()), k=min(3, len(algorithms)))
+    selected_algorithms = random.sample(available_algorithms, k=min(3, len(available_algorithms)))
 
     # Generate random weights that sum to 1.0
     weights = [random.random() for _ in selected_algorithms]
     total_weight = sum(weights)
     normalized_weights = [w / total_weight for w in weights]
 
-    # Calculate the weighted phonetic score
-    phonetic_score = sum(
-        algorithms[algo](original_name, variation) * weight
-        for algo, weight in zip(selected_algorithms, normalized_weights)
-    )
+    # Calculate the weighted phonetic score using cached results
+    phonetic_score = 0.0
+    for algo, weight in zip(selected_algorithms, normalized_weights):
+        try:
+            original_result = _cached_phonetic_algorithm(algo, original_clean)
+            variation_result = _cached_phonetic_algorithm(algo, variation_clean)
+            
+            # Compare phonetic results
+            if original_result and variation_result:
+                similarity = 1.0 if original_result == variation_result else 0.0
+                phonetic_score += similarity * weight
+        except Exception as e:
+            bt.logging.debug(f"Error in phonetic algorithm {algo}: {e}")
+            continue
 
     return float(phonetic_score)
 
+
+@performance_timer("orthographic_similarity")
+@with_error_handling(Exception, default_return=0.0)
 def calculate_orthographic_similarity(original_name: str, variation: str) -> float:
     """
     Calculate orthographic similarity between two strings using Levenshtein distance.
@@ -102,17 +147,68 @@ def calculate_orthographic_similarity(original_name: str, variation: str) -> flo
     Returns:
         Orthographic similarity score between 0 and 1
     """
+    if not original_name or not variation:
+        return 0.0
+    
+    # Clean inputs
+    original_clean = original_name.strip().lower()
+    variation_clean = variation.strip().lower()
+    
+    if original_clean == variation_clean:
+        return 1.0
+    
     try:
         # Use Levenshtein distance to compare
-        distance = Levenshtein.distance(original_name, variation)
-        max_len = max(len(original_name), len(variation))
+        distance = Levenshtein.distance(original_clean, variation_clean)
+        max_len = max(len(original_clean), len(variation_clean))
+        
+        if max_len == 0:
+            return 1.0
         
         # Calculate orthographic similarity score (0-1)
-        return 1.0 - (distance / max_len)
+        similarity = 1.0 - (distance / max_len)
+        return max(0.0, similarity)  # Ensure non-negative
+        
     except Exception as e:
         bt.logging.warning(f"Error calculating orthographic score: {str(e)}")
         return 0.0
 
+
+@performance_timer("batch_similarity_calculation")
+def calculate_batch_similarities(original_name: str, variations: List[str]) -> Tuple[List[float], List[float]]:
+    """
+    Calculate similarities for a batch of variations efficiently.
+    
+    Args:
+        original_name: The original name to compare against
+        variations: List of variations to compare
+        
+    Returns:
+        Tuple of (phonetic_similarities, orthographic_similarities)
+    """
+    if not variations:
+        return [], []
+    
+    phonetic_similarities = []
+    orthographic_similarities = []
+    
+    # Process in batches to manage memory
+    batch_size = 50
+    for i in range(0, len(variations), batch_size):
+        batch = variations[i:i + batch_size]
+        
+        # Calculate similarities for this batch
+        for variation in batch:
+            phonetic_sim = calculate_phonetic_similarity(original_name, variation)
+            orthographic_sim = calculate_orthographic_similarity(original_name, variation)
+            
+            phonetic_similarities.append(phonetic_sim)
+            orthographic_similarities.append(orthographic_sim)
+    
+    return phonetic_similarities, orthographic_similarities
+
+
+@performance_timer("part_score_calculation")
 def calculate_part_score(
     original_part: str,
     variations: List[str],
