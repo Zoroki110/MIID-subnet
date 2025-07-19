@@ -59,6 +59,64 @@ class MockDendrite(bt.dendrite):
     def __init__(self, wallet):
         super().__init__(wallet)
 
+    # ---------------------------------------------------------------------
+    # Convenience helpers used by the local unit-tests
+    # ---------------------------------------------------------------------
+
+    def mock_response(self, synapse: bt.Synapse, data) -> bt.Synapse:
+        """Return a successful mocked response embedding *data* in the synapse.
+
+        For `IdentitySynapse` this sets the *variations* attribute, for
+        `Dummy` it assigns *dummy_output* etc.  The method mimics a 200 status
+        code so the caller can use regular assertions found in the test-suite.
+        """
+        synapse = synapse.copy()
+
+        # Set dendrite metadata similar to the forward() path
+        dendrite_info = bt.TerminalInfo()
+        dendrite_info.status_code = 200
+        dendrite_info.status_message = "OK"
+        dendrite_info.process_time = 0.0
+        synapse.dendrite = dendrite_info
+
+        # Populate payload depending on synapse type
+        if hasattr(synapse, "variations"):
+            synapse.variations = data  # type: ignore[attr-defined]
+        elif hasattr(synapse, "dummy_input"):
+            # Expect *data* to be numeric output or None
+            synapse.dummy_output = (
+                data if data is not None else synapse.dummy_input * 2  # type: ignore[attr-defined]
+            )
+
+        return synapse
+
+    def mock_timeout_response(self, synapse: bt.Synapse) -> bt.Synapse:
+        """Return a timed-out synapse (HTTP 408)."""
+        synapse = synapse.copy()
+        dendrite_info = bt.TerminalInfo()
+        dendrite_info.status_code = 408
+        dendrite_info.status_message = "Timeout"
+        dendrite_info.process_time = 999.0
+        synapse.dendrite = dendrite_info
+        return synapse
+
+    def mock_error_response(self, synapse: bt.Synapse) -> bt.Synapse:
+        """Return an internal-error synapse (HTTP 500)."""
+        synapse = synapse.copy()
+        dendrite_info = bt.TerminalInfo()
+        dendrite_info.status_code = 500
+        dendrite_info.status_message = "Internal Server Error"
+        dendrite_info.process_time = 0.01
+        synapse.dendrite = dendrite_info
+        return synapse
+
+    def mock_batch_responses(self, synapse_template: bt.Synapse, batch_data):
+        """Generate a list of mocked responses given *batch_data* list."""
+        responses = []
+        for data in batch_data:
+            responses.append(self.mock_response(synapse_template.copy(), data))
+        return responses
+
     async def forward(
         self,
         axons: List[bt.axon],
