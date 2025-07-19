@@ -3,26 +3,21 @@
 # Copyright © 2025 Yanez - MIID Team
 
 """
-Performance Optimization Module
+Performance Optimization Module for MIID Subnet
 
-This module provides performance optimization utilities including:
-- Caching mechanisms
+Provides performance optimization utilities including:
+- LRU caching with TTL support
+- Function execution timing
+- Memory monitoring
 - Batch processing utilities
-- Performance monitoring
-- Memory management
-- Async optimization helpers
 """
 
-import asyncio
 import functools
 import time
 import threading
-import gc
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional
 from collections import OrderedDict
 import bittensor as bt
-import psutil
-import weakref
 
 
 class LRUCache:
@@ -80,7 +75,13 @@ class LRUCache:
 
 
 def lru_cache_with_ttl(max_size: int = 128, ttl_seconds: Optional[float] = None):
-    """Decorator for LRU caching with optional TTL."""
+    """
+    Decorator for LRU caching with optional TTL.
+    
+    Args:
+        max_size: Maximum cache size
+        ttl_seconds: Time to live for cached entries
+    """
     def decorator(func: Callable) -> Callable:
         cache = LRUCache(max_size, ttl_seconds)
         
@@ -218,7 +219,12 @@ class PerformanceMonitor:
 
 
 def performance_timer(name: Optional[str] = None):
-    """Decorator to time function execution."""
+    """
+    Decorator to time function execution.
+    
+    Args:
+        name: Optional name for the timer (defaults to function name)
+    """
     def decorator(func: Callable) -> Callable:
         timer_name = name or func.__name__
         
@@ -237,7 +243,12 @@ def performance_timer(name: Optional[str] = None):
 
 
 def async_performance_timer(name: Optional[str] = None):
-    """Decorator to time async function execution."""
+    """
+    Decorator to time async function execution.
+    
+    Args:
+        name: Optional name for the timer (defaults to function name)
+    """
     def decorator(func: Callable) -> Callable:
         timer_name = name or func.__name__
         
@@ -255,108 +266,5 @@ def async_performance_timer(name: Optional[str] = None):
     return decorator
 
 
-class MemoryManager:
-    """Memory management utilities."""
-    
-    @staticmethod
-    def get_memory_usage() -> Dict[str, float]:
-        """Get current memory usage information."""
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        
-        return {
-            'rss_mb': memory_info.rss / 1024 / 1024,  # Resident set size
-            'vms_mb': memory_info.vms / 1024 / 1024,  # Virtual memory size
-            'percent': process.memory_percent(),
-            'available_mb': psutil.virtual_memory().available / 1024 / 1024
-        }
-    
-    @staticmethod
-    def force_garbage_collection() -> int:
-        """Force garbage collection and return number of objects collected."""
-        return gc.collect()
-    
-    @staticmethod
-    def memory_monitor(threshold_mb: float = 500.0):
-        """Decorator to monitor memory usage and warn if threshold exceeded."""
-        def decorator(func: Callable) -> Callable:
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
-                initial_memory = MemoryManager.get_memory_usage()
-                
-                try:
-                    result = func(*args, **kwargs)
-                    return result
-                finally:
-                    final_memory = MemoryManager.get_memory_usage()
-                    memory_increase = final_memory['rss_mb'] - initial_memory['rss_mb']
-                    
-                    if memory_increase > threshold_mb:
-                        bt.logging.warning(
-                            f"Function '{func.__name__}' increased memory usage by {memory_increase:.2f} MB "
-                            f"(threshold: {threshold_mb} MB)"
-                        )
-            
-            return wrapper
-        return decorator
-
-
-class AsyncSemaphoreManager:
-    """Manage concurrent operations with semaphores."""
-    
-    def __init__(self, max_concurrent: int = 10):
-        self.semaphore = asyncio.Semaphore(max_concurrent)
-        self.active_operations = 0
-        self.lock = asyncio.Lock()
-    
-    async def acquire(self):
-        """Acquire semaphore and track active operations."""
-        await self.semaphore.acquire()
-        async with self.lock:
-            self.active_operations += 1
-    
-    def release(self):
-        """Release semaphore and update active operations count."""
-        self.semaphore.release()
-        asyncio.create_task(self._decrement_operations())
-    
-    async def _decrement_operations(self):
-        async with self.lock:
-            self.active_operations -= 1
-    
-    async def get_active_count(self) -> int:
-        """Get number of active operations."""
-        async with self.lock:
-            return self.active_operations
-
-
-def throttle_concurrent_calls(max_concurrent: int = 10):
-    """Decorator to limit concurrent async function calls."""
-    semaphore_manager = AsyncSemaphoreManager(max_concurrent)
-    
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        async def wrapper(*args, **kwargs):
-            await semaphore_manager.acquire()
-            try:
-                return await func(*args, **kwargs)
-            finally:
-                semaphore_manager.release()
-        
-        return wrapper
-    return decorator
-
-
 # Global performance monitor instance
 performance_monitor = PerformanceMonitor()
-
-
-def optimize_similarity_calculations():
-    """Optimization suggestions for similarity calculations."""
-    return {
-        "use_caching": "Cache phonetic algorithm results for repeated names",
-        "batch_processing": "Process multiple names simultaneously",
-        "early_termination": "Stop calculation if similarity threshold is met",
-        "algorithm_selection": "Use faster algorithms for initial filtering",
-        "vectorization": "Use numpy operations where possible"
-    }

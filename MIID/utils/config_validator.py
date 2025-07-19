@@ -3,15 +3,15 @@
 # Copyright © 2025 Yanez - MIID Team
 
 """
-Configuration Validation Module
+Configuration Validation Module for MIID Subnet
 
-This module provides comprehensive configuration validation for the MIID subnet,
-ensuring all required settings are properly configured and valid.
+Provides comprehensive configuration validation ensuring all required settings
+are properly configured and valid.
 """
 
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, List, Tuple
 import bittensor as bt
 from pathlib import Path
 
@@ -24,7 +24,7 @@ class ConfigValidator:
     # Required environment variables
     REQUIRED_ENV_VARS = {
         'miner': ['CHUTES_API_KEY'],
-        'validator': ['WANDB_API_KEY'],
+        'validator': [],  # WANDB_API_KEY is optional
         'common': []
     }
     
@@ -49,11 +49,9 @@ class ConfigValidator:
         """
         errors = []
         
-        with ErrorContext("Miner Configuration Validation"):
+        with ErrorContext("Miner Configuration Validation", log_success=False):
             # Check required attributes
-            required_attrs = [
-                'wallet', 'subtensor', 'metagraph', 'neuron', 'axon'
-            ]
+            required_attrs = ['wallet', 'subtensor', 'metagraph', 'neuron']
             
             for attr in required_attrs:
                 if not hasattr(config, attr):
@@ -67,11 +65,6 @@ class ConfigValidator:
             # Check environment variables
             env_errors = cls._validate_environment_variables('miner')
             errors.extend(env_errors)
-            
-            # Validate API settings
-            if hasattr(config, 'neuron') and hasattr(config.neuron, 'model_name'):
-                if not cls._validate_model_name(config.neuron.model_name):
-                    errors.append(f"Invalid model name: {config.neuron.model_name}")
         
         return errors
     
@@ -88,11 +81,9 @@ class ConfigValidator:
         """
         errors = []
         
-        with ErrorContext("Validator Configuration Validation"):
+        with ErrorContext("Validator Configuration Validation", log_success=False):
             # Check required attributes
-            required_attrs = [
-                'wallet', 'subtensor', 'metagraph', 'neuron'
-            ]
+            required_attrs = ['wallet', 'subtensor', 'metagraph', 'neuron']
             
             for attr in required_attrs:
                 if not hasattr(config, attr):
@@ -106,10 +97,6 @@ class ConfigValidator:
             # Check environment variables
             env_errors = cls._validate_environment_variables('validator')
             errors.extend(env_errors)
-            
-            # Validate wandb settings
-            wandb_errors = cls._validate_wandb_config(config)
-            errors.extend(wandb_errors)
         
         return errors
     
@@ -129,12 +116,16 @@ class ConfigValidator:
         if hasattr(neuron_config, 'full_path'):
             path = Path(neuron_config.full_path)
             if not path.parent.exists():
-                errors.append(f"Parent directory does not exist: {path.parent}")
+                try:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    errors.append(f"Cannot create directory {path.parent}: {e}")
         
         # Type-specific validation
         if neuron_type == 'miner':
-            if hasattr(neuron_config, 'model_name') and not neuron_config.model_name:
-                errors.append("Miner model name cannot be empty")
+            if hasattr(neuron_config, 'model_name') and neuron_config.model_name:
+                if not cls._validate_model_name(neuron_config.model_name):
+                    errors.append(f"Invalid model name: {neuron_config.model_name}")
         
         elif neuron_type == 'validator':
             if hasattr(neuron_config, 'num_concurrent_forwards'):
@@ -154,19 +145,11 @@ class ConfigValidator:
         required_vars.extend(cls.REQUIRED_ENV_VARS.get('common', []))
         
         for var in required_vars:
-            if not os.getenv(var):
+            value = os.getenv(var)
+            if not value:
                 errors.append(f"Missing required environment variable: {var}")
-        
-        # Validate specific environment variable formats
-        if component == 'miner':
-            chutes_key = os.getenv('CHUTES_API_KEY')
-            if chutes_key and not cls._validate_api_key_format(chutes_key):
-                errors.append("CHUTES_API_KEY appears to have invalid format")
-        
-        if component == 'validator':
-            wandb_key = os.getenv('WANDB_API_KEY')
-            if wandb_key and not cls._validate_api_key_format(wandb_key):
-                errors.append("WANDB_API_KEY appears to have invalid format")
+            elif not cls._validate_api_key_format(value):
+                errors.append(f"{var} appears to have invalid format")
         
         return errors
     
@@ -176,11 +159,11 @@ class ConfigValidator:
         if not api_key or not isinstance(api_key, str):
             return False
         
-        # Basic format check: should be alphanumeric and reasonable length
+        # Basic format check: should be reasonable length
         if len(api_key) < 10 or len(api_key) > 200:
             return False
         
-        # Should contain alphanumeric characters
+        # Should contain only safe characters
         if not re.match(r'^[a-zA-Z0-9_\-]+$', api_key):
             return False
         
@@ -204,66 +187,11 @@ class ConfigValidator:
         return True
     
     @classmethod
-    def _validate_wandb_config(cls, config: Any) -> List[str]:
-        """Validate Weights & Biases configuration."""
-        errors = []
-        
-        # Check if wandb is disabled
-        if hasattr(config, 'wandb') and hasattr(config.wandb, 'off') and config.wandb.off:
-            return errors  # No validation needed if disabled
-        
-        # Check wandb project name
-        if hasattr(config, 'wandb') and hasattr(config.wandb, 'project_name'):
-            project_name = config.wandb.project_name
-            if project_name and not cls._validate_project_name(project_name):
-                errors.append(f"Invalid wandb project name: {project_name}")
-        
-        # Check wandb entity
-        if hasattr(config, 'wandb') and hasattr(config.wandb, 'entity'):
-            entity = config.wandb.entity
-            if entity and not cls._validate_wandb_entity(entity):
-                errors.append(f"Invalid wandb entity: {entity}")
-        
-        return errors
-    
-    @classmethod
-    def _validate_project_name(cls, project_name: str) -> bool:
-        """Validate wandb project name format."""
-        if not project_name or not isinstance(project_name, str):
-            return False
-        
-        # Project names should be reasonable length and format
-        if len(project_name) > 128 or len(project_name) < 1:
-            return False
-        
-        # Should match wandb naming conventions
-        if not re.match(r'^[a-zA-Z0-9_\-\.]+$', project_name):
-            return False
-        
-        return True
-    
-    @classmethod
-    def _validate_wandb_entity(cls, entity: str) -> bool:
-        """Validate wandb entity format."""
-        if not entity or not isinstance(entity, str):
-            return False
-        
-        # Entity names should be reasonable length and format
-        if len(entity) > 128 or len(entity) < 1:
-            return False
-        
-        # Should match wandb naming conventions
-        if not re.match(r'^[a-zA-Z0-9_\-]+$', entity):
-            return False
-        
-        return True
-    
-    @classmethod
     def validate_network_config(cls, config: Any) -> List[str]:
         """Validate network-related configuration."""
         errors = []
         
-        with ErrorContext("Network Configuration Validation"):
+        with ErrorContext("Network Configuration Validation", log_success=False):
             # Validate netuid
             if hasattr(config, 'netuid'):
                 if not isinstance(config.netuid, int) or config.netuid < 0:
@@ -311,7 +239,7 @@ class ConfigValidator:
         """Validate logging configuration."""
         errors = []
         
-        with ErrorContext("Logging Configuration Validation"):
+        with ErrorContext("Logging Configuration Validation", log_success=False):
             if hasattr(config, 'logging'):
                 # Validate logging directory
                 if hasattr(config.logging, 'logging_dir'):

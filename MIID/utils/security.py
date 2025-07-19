@@ -3,27 +3,23 @@
 # Copyright © 2025 Yanez - MIID Team
 
 """
-Security Enhancement Module
+Security Module for MIID Subnet
 
-This module provides security utilities for the MIID subnet including:
+Provides security utilities including:
 - Input validation and sanitization
 - Rate limiting
-- API key management
 - Request authentication
-- Anti-abuse measures
+- Basic abuse detection
 """
 
 import re
 import time
-import hashlib
-import secrets
 import threading
-from typing import Any, Callable, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Set
 from collections import defaultdict, deque
 import bittensor as bt
-from datetime import datetime, timedelta
 
-from MIID.utils.error_handling import MIIDSecurityError, with_error_handling
+from MIID.utils.error_handling import MIIDSecurityError
 
 
 class InputValidator:
@@ -32,11 +28,11 @@ class InputValidator:
     # Safe name patterns (letters, spaces, hyphens, apostrophes)
     SAFE_NAME_PATTERN = re.compile(r"^[a-zA-Z\s\-'\.]{1,100}$")
     
-    # SQL injection patterns to detect
-    SQL_INJECTION_PATTERNS = [
+    # Dangerous patterns to detect
+    DANGEROUS_PATTERNS = [
+        r"<script.*?>", r"javascript:", r"onclick\s*=",
         r"union\s+select", r"drop\s+table", r"delete\s+from",
-        r"insert\s+into", r"update\s+set", r"exec\s*\(",
-        r"<script", r"javascript:", r"onclick\s*="
+        r"insert\s+into", r"update\s+set", r"exec\s*\("
     ]
     
     @classmethod
@@ -50,10 +46,7 @@ class InputValidator:
         Returns:
             True if valid, False otherwise
         """
-        if not isinstance(name, str):
-            return False
-        
-        if not name or not name.strip():
+        if not isinstance(name, str) or not name or not name.strip():
             return False
         
         # Check length
@@ -75,10 +68,7 @@ class InputValidator:
         Returns:
             True if all names are valid, False otherwise
         """
-        if not isinstance(names, list):
-            return False
-        
-        if len(names) == 0 or len(names) > max_count:
+        if not isinstance(names, list) or len(names) == 0 or len(names) > max_count:
             return False
         
         return all(cls.validate_name(name) for name in names)
@@ -94,28 +84,21 @@ class InputValidator:
         Returns:
             True if valid, False otherwise
         """
-        if not isinstance(template, str):
-            return False
-        
-        if not template or not template.strip():
+        if not isinstance(template, str) or not template or not template.strip():
             return False
         
         # Check length
-        if len(template) > 5000:  # Reasonable template length limit
+        if len(template) > 5000:
             return False
         
-        # Check for malicious patterns
+        # Check for dangerous patterns
         template_lower = template.lower()
-        for pattern in cls.SQL_INJECTION_PATTERNS:
+        for pattern in cls.DANGEROUS_PATTERNS:
             if re.search(pattern, template_lower):
                 return False
         
-        # Must contain {name} placeholder
-        if "{name}" not in template:
-            return False
-        
-        # Should not contain multiple {name} placeholders
-        if template.count("{name}") > 1:
+        # Must contain exactly one {name} placeholder
+        if template.count("{name}") != 1:
             return False
         
         return True
@@ -138,10 +121,8 @@ class InputValidator:
         # Truncate if too long
         text = text[:max_length]
         
-        # Remove null bytes and control characters
+        # Remove control characters and potential script content
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
-        
-        # Remove potential script tags and javascript
         text = re.sub(r'<script.*?</script>', '', text, flags=re.IGNORECASE | re.DOTALL)
         text = re.sub(r'javascript:', '', text, flags=re.IGNORECASE)
         
@@ -169,7 +150,7 @@ class RateLimiter:
         Check if request is allowed for given identifier.
         
         Args:
-            identifier: Unique identifier (e.g., IP address, hotkey)
+            identifier: Unique identifier (e.g., hotkey)
             
         Returns:
             True if request is allowed, False if rate limited
@@ -207,77 +188,6 @@ class RateLimiter:
         """Clear rate limit data for identifier."""
         with self.lock:
             self.requests.pop(identifier, None)
-
-
-class APIKeyManager:
-    """Manage API keys and authentication."""
-    
-    def __init__(self):
-        self.valid_keys: Set[str] = set()
-        self.key_permissions: Dict[str, Set[str]] = {}
-        self.key_usage: Dict[str, List[float]] = defaultdict(list)
-        self.lock = threading.Lock()
-    
-    def generate_api_key(self, permissions: Optional[Set[str]] = None) -> str:
-        """
-        Generate a new API key.
-        
-        Args:
-            permissions: Set of permissions for the key
-            
-        Returns:
-            Generated API key
-        """
-        api_key = secrets.token_urlsafe(32)
-        
-        with self.lock:
-            self.valid_keys.add(api_key)
-            self.key_permissions[api_key] = permissions or set()
-        
-        return api_key
-    
-    def validate_api_key(self, api_key: str, required_permission: Optional[str] = None) -> bool:
-        """
-        Validate API key and check permissions.
-        
-        Args:
-            api_key: API key to validate
-            required_permission: Required permission to check
-            
-        Returns:
-            True if valid and has permission, False otherwise
-        """
-        with self.lock:
-            if api_key not in self.valid_keys:
-                return False
-            
-            if required_permission:
-                if required_permission not in self.key_permissions.get(api_key, set()):
-                    return False
-            
-            # Record usage
-            self.key_usage[api_key].append(time.time())
-            
-            return True
-    
-    def revoke_api_key(self, api_key: str) -> bool:
-        """
-        Revoke an API key.
-        
-        Args:
-            api_key: API key to revoke
-            
-        Returns:
-            True if key was revoked, False if key didn't exist
-        """
-        with self.lock:
-            if api_key in self.valid_keys:
-                self.valid_keys.remove(api_key)
-                self.key_permissions.pop(api_key, None)
-                self.key_usage.pop(api_key, None)
-                return True
-            
-            return False
 
 
 class RequestAuthenticator:
@@ -324,7 +234,7 @@ class AbuseDetector:
         self.suspicious_patterns: Dict[str, int] = defaultdict(int)
         self.lock = threading.Lock()
     
-    def record_request(self, identifier: str, request_data: Dict[str, Any]) -> None:
+    def record_request(self, identifier: str) -> None:
         """Record request for pattern analysis."""
         current_time = time.time()
         
@@ -438,6 +348,5 @@ def validate_input(**validation_rules):
 
 # Global instances
 default_rate_limiter = RateLimiter()
-api_key_manager = APIKeyManager()
 request_authenticator = RequestAuthenticator()
 abuse_detector = AbuseDetector()

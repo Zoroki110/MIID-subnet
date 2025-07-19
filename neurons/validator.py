@@ -67,6 +67,11 @@ import bittensor as bt
 # import base validator class which takes care of most of the boilerplate
 from MIID.base.validator import BaseValidatorNeuron
 
+# Import enhanced modules
+from MIID.utils.error_handling import with_error_handling, ErrorContext
+from MIID.utils.performance import performance_timer
+from MIID.utils.config_validator import validate_and_setup_config
+
 # Bittensor Validator Template:
 from MIID.validator import forward
 # Import only what's needed from the validator module
@@ -114,6 +119,10 @@ class Validator(BaseValidatorNeuron):
             config: Configuration object for the validator
         """
         bt.logging.info("Initializing Validator")
+        
+        # Validate configuration before initialization
+        if config:
+            validate_and_setup_config(config, 'validator')
 
         super(Validator, self).__init__(config=config)
 

@@ -3,14 +3,13 @@
 # Copyright © 2025 Yanez - MIID Team
 
 """
-Error Handling and Custom Exceptions Module
+Error Handling Module for MIID Subnet
 
-This module provides comprehensive error handling utilities and custom exceptions
-for the MIID subnet. It includes:
-- Custom exception classes for different error types
+Provides comprehensive error handling utilities including:
+- Custom exception classes
 - Error handling decorators
 - Retry mechanisms
-- Logging helpers
+- Safe execution utilities
 """
 
 import functools
@@ -47,11 +46,6 @@ class MIIDNetworkError(MIIDError):
 
 class MIIDConfigurationError(MIIDError):
     """Exception raised for configuration-related errors."""
-    pass
-
-
-class MIIDAPIError(MIIDError):
-    """Exception raised for API-related errors."""
     pass
 
 
@@ -230,29 +224,6 @@ async def safe_async_execute(func: Callable, *args, default_return: Any = None, 
             bt.logging.error(f"Error executing async {func.__name__}: {str(e)}")
             bt.logging.debug(f"Traceback: {traceback.format_exc()}")
         return default_return
-
-
-def validate_config(config: Any, required_fields: list) -> None:
-    """
-    Validate configuration object has required fields.
-    
-    Args:
-        config: Configuration object to validate
-        required_fields: List of required field names
-        
-    Raises:
-        MIIDConfigurationError: If required fields are missing
-    """
-    missing_fields = []
-    
-    for field in required_fields:
-        if not hasattr(config, field) or getattr(config, field) is None:
-            missing_fields.append(field)
-    
-    if missing_fields:
-        raise MIIDConfigurationError(
-            f"Missing required configuration fields: {', '.join(missing_fields)}"
-        )
 
 
 class ErrorContext:

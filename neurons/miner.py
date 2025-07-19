@@ -63,6 +63,12 @@ from MIID.protocol import IdentitySynapse
 # import base miner class which takes care of most of the boilerplate
 from MIID.base.miner import BaseMinerNeuron
 
+# Import enhanced modules
+from MIID.utils.error_handling import with_error_handling, ErrorContext, MIIDMinerError
+from MIID.utils.security import InputValidator, validate_input
+from MIID.utils.performance import performance_timer
+from MIID.utils.config_validator import validate_and_setup_config
+
 
 class Miner(BaseMinerNeuron):
     """
@@ -96,6 +102,10 @@ class Miner(BaseMinerNeuron):
         Args:
             config: Configuration object for the miner
         """
+        # Validate configuration before initialization
+        if config:
+            validate_and_setup_config(config, 'miner')
+        
         super(Miner, self).__init__(config=config)
         
         # Initialize the LLM client
@@ -119,6 +129,9 @@ class Miner(BaseMinerNeuron):
         os.makedirs(self.output_path, exist_ok=True)
         bt.logging.info(f"Mining results will be saved to: {self.output_path}")
 
+    @validate_input(names='names_list', query_template='query_template')
+    @performance_timer("miner_forward")
+    @with_error_handling(Exception, default_return=None)
     async def forward(self, synapse: IdentitySynapse) -> IdentitySynapse:
         """
         Process a name variation request by generating variations for each name.
