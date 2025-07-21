@@ -14,25 +14,41 @@ class MockSubtensor(bt.MockSubtensor):
         if not self.subnet_exists(netuid):
             self.create_subnet(netuid)
 
-        # Register ourself (the validator) as a neuron at uid=0
+        # Register ourself (the validator) as a neuron at uid=0.
+        # pytest may construct several MockSubtensor instances during a run and
+        # the underlying bittensor mock keeps a *global* chain_state.  If the
+        # same hotkey is registered twice we get a "Hotkey already registered"
+        # exception.  We simply ignore that situation.
+
         if wallet is not None:
-            self.force_register_neuron(
-                netuid=netuid,
-                hotkey=wallet.hotkey.ss58_address,
-                coldkey=wallet.coldkey.ss58_address,
-                balance=100000,
-                stake=100000,
-            )
+            try:
+                self.force_register_neuron(
+                    netuid=netuid,
+                    hotkey=wallet.hotkey.ss58_address,
+                    coldkey=wallet.coldkey.ss58_address,
+                    balance=100000,
+                    stake=100000,
+                )
+            except Exception as e:
+                if "already registered" not in str(e).lower():
+                    raise
 
         # Register n mock neurons who will be miners
+        import uuid
+
         for i in range(1, n + 1):
-            self.force_register_neuron(
-                netuid=netuid,
-                hotkey=f"miner-hotkey-{i}",
-                coldkey="mock-coldkey",
-                balance=100000,
-                stake=100000,
-            )
+            unique_hotkey = f"miner-hotkey-{i}-{uuid.uuid4().hex[:6]}"
+            try:
+                self.force_register_neuron(
+                    netuid=netuid,
+                    hotkey=unique_hotkey,
+                    coldkey="mock-coldkey",
+                    balance=100000,
+                    stake=100000,
+                )
+            except Exception as e:
+                if "already registered" not in str(e).lower():
+                    raise
 
 
 class MockMetagraph(bt.metagraph):
@@ -58,6 +74,8 @@ class MockDendrite(bt.dendrite):
 
     def __init__(self, wallet):
         super().__init__(wallet)
+        # Ensure attribute exists so bittensor.dendrite.__del__ doesn't error.
+        self._session = None
 
     # ---------------------------------------------------------------------
     # Convenience helpers used by the local unit-tests
