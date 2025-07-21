@@ -26,9 +26,10 @@ def sign_message(wallet: Union["bittensor.wallet", str], message_text: str, outp
     if isinstance(wallet, str):
         # Create an ephemeral keypair.  We only need it for signing the test
         # payload, so persisting it to disk is unnecessary.
-        from substrateinterface import Keypair  # lightweight dependency shipped with bittensor
+        import os
+        from substrateinterface import Keypair
 
-        keypair = Keypair.generate()
+        keypair = Keypair.create_from_seed(os.urandom(32))
     else:
         keypair = wallet.hotkey
 
