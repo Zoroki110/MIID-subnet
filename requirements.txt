@@ -12,7 +12,7 @@ ollama==0.1.9
 python-Levenshtein==0.24.0
 jellyfish==1.0.4
 aiohttp==3.9.5
-substrate-interface==1.5.0
+substrate-interface>=1.7.9
 bittensor==7.4.0
 # bittensor-cli is optional for most unit-tests; pin to a modern version that ships wheels for Python ≥3.11
 bittensor-cli>=8.4.4
