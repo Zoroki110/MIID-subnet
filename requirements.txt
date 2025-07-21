@@ -12,7 +12,7 @@ faker==24.8.0
 ollama==0.1.9
 python-Levenshtein==0.24.0
 jellyfish==1.0.4
-aiohttp==3.9.5
+# aiohttp version is pulled transitively by bittensor and btcli (3.10.x).
 substrate-interface>=1.7.9
 bittensor==7.4.0
 # bittensor-cli version 8.4.4 is compatible with aiohttp 3.9.x (matches bittensor 7.4.0)
