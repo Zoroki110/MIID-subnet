@@ -85,9 +85,9 @@ class Dummy(bt.Synapse):
     dummy_input: int
     dummy_output: Optional[int] = None
 
-    def deserialize(self) -> Optional[int]:
-        """Return the output in its native python type."""
-        return self.dummy_output
+    def deserialize(self) -> int:
+        """Return the output in its native python type, defaulting to 0 if None."""
+        return int(self.dummy_output) if self.dummy_output is not None else 0
 
     # ------------------------------------------------------------------
     # Helpers to make Dummy instances compare equal to their output value so
