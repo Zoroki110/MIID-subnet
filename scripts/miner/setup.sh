@@ -223,9 +223,10 @@ install_miid() {
 # Uses the official install script for Bittensor.
 # ---------------------------------------------------------
 install_bittensor() {
-  info_msg "Installing Bittensor..."
-  pip install bittensor || handle_error "Failed to install Bittensor"
-  success_msg "Bittensor installed successfully."
+  info_msg "Installing Bittensor and btcli..."
+  pip install bittensor bittensor-cli \
+    || handle_error "Failed to install Bittensor or btcli"
+  success_msg "Bittensor and btcli installed successfully."
 }
 
 # ---------------------------------------------------------
