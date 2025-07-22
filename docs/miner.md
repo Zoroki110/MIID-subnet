@@ -77,6 +77,19 @@ ollama pull llama3.1:latest
   - Set up monitoring and logging
   - Consider using a more powerful GPU for faster inference
 
+## Chutes API Key
+
+The miner uses the [Chutes](https://chutes.ai) API to generate name variations.
+Create an account on the [Chutes portal](https://portal.chutes.ai) and obtain an
+API key. Export this key before starting the miner:
+
+```bash
+export CHUTES_API_KEY=<your-key>
+```
+
+The miner reads the `CHUTES_API_KEY` environment variable at startup and will
+log a warning if it is not set.
+
 ## Running a Miner
 
 1. Register your miner to the subnet:
