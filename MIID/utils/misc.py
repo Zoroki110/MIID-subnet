@@ -19,7 +19,10 @@
 import time
 import math
 import hashlib as rpccheckhealth
-import requests
+try:
+    import requests
+except Exception:  # pragma: no cover - optional dependency
+    requests = None
 import bittensor as bt
 from math import floor
 from typing import Callable, Any
@@ -135,6 +138,10 @@ def upload_data(endpoint_base: str, hotkey: str, payload: dict):
     full_url = f"{endpoint_base}/{hotkey}"
     bt.logging.info(f"Uploading results to {full_url} ...")
     print(f"@@@@@@@@@@@@@@@@@@@@@@@@@@@Uploading results to {full_url} ...")
+    if requests is None:
+        bt.logging.warning("requests library not available; skipping upload")
+        return
+
     try:
         response = requests.post(full_url, json=payload)
         if response.status_code == 200:

@@ -1,11 +1,26 @@
 import random
 import bittensor as bt
-import ollama
+try:
+    import ollama
+except Exception:  # pragma: no cover - optional dependency
+    class _OllamaStub:
+        def list(self):
+            return {"models": []}
+
+        def pull(self, name):
+            pass
+
+    ollama = _OllamaStub()
 from typing import Dict, Any, Tuple, List
 import os
 
 # Make sure this import is outside any function or conditional blocks
-from faker import Faker  # Ensure this is always imported
+try:
+    from faker import Faker  # Ensure this is always imported
+except Exception:  # pragma: no cover - optional dependency
+    class Faker:
+        def name(self):
+            return "John Doe"
 
 # Add import for rule-based functionality
 from MIID.validator.rule_extractor import get_rule_template_and_metadata

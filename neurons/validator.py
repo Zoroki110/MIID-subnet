@@ -46,9 +46,16 @@ import time
 import traceback
 import datetime as dt
 import json
-import wandb
+try:
+    import wandb
+except Exception:  # pragma: no cover - optional dependency
+    wandb = None
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    def load_dotenv(*args, **kwargs):
+        pass
 
 # Load environment variables from .env file (e.g., vali.env)
 # This will load WANDB_API_KEY if set in the file
@@ -72,7 +79,17 @@ from MIID.validator import forward
 # Import only what's needed from the validator module
 # Import reward function if needed for metrics (or maybe just pass rewards to log_step)
 from MIID.validator.reward import get_name_variation_rewards
-import ollama
+try:
+    import ollama
+except Exception:  # pragma: no cover - optional dependency
+    class _OllamaStub:
+        def list(self):
+            return {"models": []}
+
+        def pull(self, name):
+            pass
+
+    ollama = _OllamaStub()
 from MIID.validator.query_generator import QueryGenerator
 
 

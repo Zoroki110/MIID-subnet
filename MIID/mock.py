@@ -5,7 +5,15 @@ import time
 from typing import List
 
 import bittensor as bt
-from substrateinterface import Keypair
+try:
+    from substrateinterface import Keypair
+except Exception:  # pragma: no cover - optional dependency
+    class Keypair:
+        @staticmethod
+        def create_from_seed(seed):
+            class _KP:
+                ss58_address = "0x00"
+            return _KP()
 
 # ------------------------------------------------------------------
 # Ensure bt.logging behaves like the builtin logging module for tests that

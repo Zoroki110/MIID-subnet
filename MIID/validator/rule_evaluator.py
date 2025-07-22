@@ -6,8 +6,14 @@ import random
 import re
 from typing import List, Dict, Tuple, Any, Set
 import bittensor as bt
-import Levenshtein
-import jellyfish
+try:
+    import Levenshtein
+except Exception:  # pragma: no cover - optional dependency
+    Levenshtein = None
+try:
+    import jellyfish
+except Exception:  # pragma: no cover - optional dependency
+    jellyfish = None
 
 # List of rules that can be checked algorithmically
 # These are basic heuristics to check if a variation follows a specific rule
