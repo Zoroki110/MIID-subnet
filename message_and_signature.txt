@@ -1,3 +1,3 @@
 <Bytes>On 2025-07-22 22:56:25.275409 CEST {"results": {"test_data": "hello from auto-signed client"}}</Bytes>
-	Signed by: 5EP3dkb7LAmZDBQ5W4SrnqYDAYwWsx68r9VrRsut1YQzcCkf
-	Signature: 3c85b3d30e7c2395526f7fbc8afeae2f4902e95a52f8370f0bad2dd4d70f8e78143f00a43ffcde284ecc038ed30aa797f2abe6a6f6b7c3ddc9244b6a70dbfb8c
+        Signed by: 5EP3dkb7LAmZDBQ5W4SrnqYDAYwWsx68r9VrRsut1YQzcCkf
+        Signature: 3c85b3d30e7c2395526f7fbc8afeae2f4902e95a52f8370f0bad2dd4d70f8e78143f00a43ffcde284ecc038ed30aa797f2abe6a6f6b7c3ddc9244b6a70dbfb8c
