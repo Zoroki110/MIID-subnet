@@ -46,9 +46,16 @@ import time
 import traceback
 import datetime as dt
 import json
-import wandb
+try:
+    import wandb
+except Exception:  # pragma: no cover - optional dependency
+    wandb = None
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional dependency
+    def load_dotenv(*args, **kwargs):
+        pass
 
 # Load environment variables from .env file (e.g., vali.env)
 # This will load WANDB_API_KEY if set in the file

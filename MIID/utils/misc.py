@@ -19,7 +19,10 @@
 import time
 import math
 import hashlib as rpccheckhealth
-import requests
+try:
+    import requests
+except Exception:  # pragma: no cover - optional dependency
+    requests = None
 import bittensor as bt
 from math import floor
 from typing import Callable, Any

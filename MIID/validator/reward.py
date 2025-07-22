@@ -21,8 +21,14 @@ import numpy as np
 from typing import List, Dict, Tuple, Any
 import bittensor as bt
 import torch
-import Levenshtein
-import jellyfish
+try:
+    import Levenshtein
+except Exception:  # pragma: no cover - optional dependency
+    Levenshtein = None
+try:
+    import jellyfish
+except Exception:  # pragma: no cover - optional dependency
+    jellyfish = None
 import os
 import csv
 import time
