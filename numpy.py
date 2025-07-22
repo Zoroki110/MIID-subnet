@@ -22,6 +22,9 @@ class complexfloating(complex):
     pass
 
 
+int64 = int
+
+
 float32 = float
 nan = float("nan")
 
@@ -120,6 +123,7 @@ __all__ = [
     "floating",
     "complexfloating",
     "float32",
+    "int64",
     "nan",
     "array",
     "asarray",
