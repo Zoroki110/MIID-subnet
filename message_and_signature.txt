@@ -1,0 +1,3 @@
+<Bytes>On 2025-07-22 19:22:24.932196 CEST {"results": {"test_data": "hello from auto-signed client"}}</Bytes>
+	Signed by: 5FZ3Y16dkS98uZnnwnh3mATmAFngdG8AWdLdEM9PsWdA8Bc6
+	Signature: fa8dc5089adc408d66f3851eb680a4ad6ba6319dd415acc4fcf9e6810d9e8d0a3b5e6d69a5a06282117b17044da03cf45bc3faccba358502643ddc26e17f178e

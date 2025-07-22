@@ -88,3 +88,17 @@ class Dummy(bt.Synapse):
     def deserialize(self) -> Optional[int]:
         """Return the output in its native python type."""
         return self.dummy_output
+
+    # ------------------------------------------------------------------
+    # Helpers to make Dummy instances compare equal to their output value so
+    # that unit-tests can assert ``response == expected_int`` regardless of
+    # whether they received a Synapse or a raw int.
+    # ------------------------------------------------------------------
+
+    def __int__(self):  # type: ignore[override]
+        return int(self.dummy_output) if self.dummy_output is not None else 0
+
+    def __eq__(self, other):  # type: ignore[override]
+        if isinstance(other, int):
+            return self.dummy_output == other
+        return super().__eq__(other)

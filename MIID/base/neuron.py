@@ -78,8 +78,19 @@ class BaseNeuron(ABC):
         # These are core Bittensor classes to interact with the network.
         bt.logging.info("Setting up bittensor objects.")
 
-        # The wallet holds the cryptographic key pairs for the miner.
-        if self.config.mock:
+        # The wallet holds the cryptographic key pairs for the miner.  Some
+        # of the legacy unit-tests set *_mock* flags on sub-namespaces instead
+        # of toggling `config.mock` directly.  We detect that situation here
+        # to seamlessly switch into mock-mode.
+
+        use_mock = (
+            getattr(self.config, "mock", False)
+            or getattr(self.config.wallet, "_mock", False)
+            or getattr(self.config.subtensor, "_mock", False)
+            or getattr(self.config.metagraph, "_mock", False)
+        )
+
+        if use_mock:
             self.wallet = bt.MockWallet(config=self.config)
             self.subtensor = MockSubtensor(
                 self.config.netuid, wallet=self.wallet

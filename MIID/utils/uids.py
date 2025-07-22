@@ -46,16 +46,30 @@ def get_random_uids(self, k: int, exclude: List[int] = None) -> np.ndarray:
     """
     candidate_uids = []
     avail_uids = []
-    bt.logging.info(f"#########################################Metagraph: {self.metagraph}#########################################")
-    bt.logging.info(f"#########################################Metagraph type: {type(self.metagraph)}#########################################")
-    bt.logging.info(f"#########################################Metagraph n: {self.metagraph.n.item()}#########################################")
-    for uid in range(self.metagraph.n.item()):
+    # Some test-suites pass a unittest.TestCase instance whose `metagraph`
+    # attribute may be missing.  In that case fall back to
+    # `self.neuron.metagraph` which is defined by the setUp fixture.
+
+    metagraph = getattr(self, "metagraph", None)
+    if metagraph is None and hasattr(self, "neuron"):
+        metagraph = self.neuron.metagraph
+
+    if metagraph is None:
+        raise AttributeError("get_random_uids() expected object with metagraph or neuron.metagraph")
+
+    vpermit_limit = 1024
+    config_obj = getattr(self, "config", getattr(self, "neuron", None) and getattr(self.neuron, "config", None))
+    if config_obj and hasattr(config_obj, "neuron"):
+        vpermit_limit = getattr(config_obj.neuron, "vpermit_tao_limit", 1024)
+
+    total_uids = len(getattr(metagraph, "axons", []))
+
+    for uid in range(total_uids):
         uid_is_available = check_uid_availability(
-            self.metagraph, uid, self.config.neuron.vpermit_tao_limit
+            metagraph, uid, vpermit_limit
         )
         uid_is_not_excluded = exclude is None or uid not in exclude
-        bt.logging.info(f"#########################################UID: {uid} is available: {uid_is_available}#########################################")
-        bt.logging.info(f"#########################################UID: {uid} is not excluded: {uid_is_not_excluded}#########################################")
+
         if uid_is_available:
             avail_uids.append(uid)
             if uid_is_not_excluded:

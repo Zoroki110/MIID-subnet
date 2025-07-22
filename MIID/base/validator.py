@@ -49,6 +49,28 @@ class BaseValidatorNeuron(BaseNeuron):
         super().add_args(parser)
         add_validator_args(cls, parser)
 
+    # ------------------------------------------------------------------
+    # Certain legacy unit-tests expect ``config.metagraph`` and
+    # ``config.wallet`` attributes to exist even when the caller does not
+    # explicitly define them.  We inject minimal stand-ins so that later code
+    # accessing these namespaces never fails with ``AttributeError``.
+    # ------------------------------------------------------------------
+    @classmethod
+    def config(cls):
+        from types import SimpleNamespace
+
+        cfg = super().config()
+
+        # Ensure sub-namespaces exist so downstream code can safely reference
+        # e.g. ``config.metagraph._mock`` inside the bittensor helpers.
+        if getattr(cfg, "metagraph", None) is None:
+            cfg.metagraph = SimpleNamespace(_mock=False)
+
+        if getattr(cfg, "wallet", None) is None:
+            cfg.wallet = SimpleNamespace(_mock=False)
+
+        return cfg
+
     def __init__(self, config=None):
         super().__init__(config=config)
 

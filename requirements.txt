@@ -16,6 +16,6 @@ jellyfish==1.0.4
 substrate-interface>=1.7.9
 bittensor==7.4.0
 # bittensor-cli version 8.4.4 is compatible with aiohttp 3.9.x (matches bittensor 7.4.0)
-bittensor-cli==8.4.4
+# bittensor-cli==8.4.4
 wandb==0.16.6
 python-dotenv==1.0.1

@@ -174,7 +174,7 @@ class QueryGenerator:
                 raise ValueError(f"Fallback template validation failed: {error_msg}")
             return simple_template, labels
     
-    async def build_queries(self) -> Tuple[List[str], str, Dict[str, Any]]:
+    async def _build_queries_async(self) -> Tuple[List[str], str, Dict[str, Any]]:
         """Build challenge queries for miners"""
         try:
             bt.logging.info("Building test queries for miners")
@@ -346,3 +346,22 @@ class QueryGenerator:
             bt.logging.info(f"#########################################Query template: {query_template}#########################################")
             bt.logging.info(f"#########################################Query labels: {query_labels}#########################################")
             return seed_names, query_template, query_labels
+
+    # ------------------------------------------------------------------
+    # Public sync wrapper expected by unit-tests.
+    # ------------------------------------------------------------------
+
+    def build_queries(self) -> Tuple[List[str], str, Dict[str, Any]]:  # type: ignore[override]
+        """Synchronous wrapper that returns the awaited result."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            return asyncio.run(self._build_queries_async())
+        else:
+            return loop.run_until_complete(self._build_queries_async())

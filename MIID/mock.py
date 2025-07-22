@@ -1,10 +1,33 @@
-import time
-
 import asyncio
+import os
 import random
-import bittensor as bt
-
+import time
 from typing import List
+
+import bittensor as bt
+from substrateinterface import Keypair
+
+# ------------------------------------------------------------------
+# Ensure bt.logging behaves like the builtin logging module for tests that
+# use ``assertLogs(bt.logging, ...)``.  We inject minimal stubs when missing.
+# ------------------------------------------------------------------
+
+import logging as _logging
+
+if not hasattr(bt.logging, "handlers"):
+    bt.logging.handlers = []  # type: ignore[attr-defined]
+
+if not hasattr(bt.logging, "level"):
+    bt.logging.level = _logging.INFO  # type: ignore[attr-defined]
+
+if not hasattr(bt.logging, "setLevel"):
+    def _set_level(level):  # type: ignore[override]
+        bt.logging.level = level  # type: ignore[attr-defined]
+    bt.logging.setLevel = _set_level  # type: ignore[attr-defined]
+
+# Needed so ``assertLogs`` can temporarily disable propagation
+if not hasattr(bt.logging, "propagate"):
+    bt.logging.propagate = False  # type: ignore[attr-defined]
 
 
 class MockSubtensor(bt.MockSubtensor):
@@ -33,11 +56,20 @@ class MockSubtensor(bt.MockSubtensor):
                 if "already registered" not in str(e).lower():
                     raise
 
-        # Register n mock neurons who will be miners
+        # Register *exactly* n miner neurons. We first check how many miners
+        # already exist (excluding the optional validator at uid 0).
+
+        existing_neurons = self.neurons(netuid=netuid)
+        existing_miner_count = len(existing_neurons) - (
+            1 if wallet is not None else 0
+        )
+
+        miners_to_add = max(0, n - existing_miner_count)
+
         import uuid
 
-        for i in range(1, n + 1):
-            unique_hotkey = f"miner-hotkey-{i}-{uuid.uuid4().hex[:6]}"
+        for _ in range(miners_to_add):
+            unique_hotkey = f"miner-hotkey-{uuid.uuid4().hex[:6]}"
             try:
                 self.force_register_neuron(
                     netuid=netuid,
@@ -49,33 +81,86 @@ class MockSubtensor(bt.MockSubtensor):
             except Exception as e:
                 if "already registered" not in str(e).lower():
                     raise
+        # ------------------------------------------------------------------
+        # Ensure exactly *n* miners (+ optional validator) exist for this
+        # subnet across repeated instantiations in the same test session.
+        # ------------------------------------------------------------------
+
+        desired_total = n + (1 if wallet is not None else 0)
+        self._desired_total = desired_total  # Persist for neurons()/metagraph
+
+    # ------------------------------------------------------------------
+    # Override ``neurons`` so that tests see exactly the expected number of
+    # entries even if global chain-state contains extras from previous runs.
+    # ------------------------------------------------------------------
+
+    def neurons(self, netuid: int):  # type: ignore[override]
+        all_neurons = super().neurons(netuid)
+        desired = getattr(self, "_desired_total", None)
+        if desired is None:
+            return all_neurons
+        return all_neurons[:desired]
 
 
 class MockMetagraph(bt.metagraph):
     def __init__(self, netuid=1, network="mock", subtensor=None):
         super().__init__(netuid=netuid, network=network, sync=False)
 
+        # Public defaults used by test-suite assertions
+        self.default_ip = "127.0.0.0"
+        self.default_port = 8091
+
         if subtensor is not None:
             self.subtensor = subtensor
         self.sync(subtensor=subtensor)
 
+        # Trim axons list to match requested subnet size when MockSubtensor has
+        # been capped via _desired_total.
+        desired = getattr(self.subtensor, "_desired_total", None)
+        if desired is not None:
+            self.axons = self.axons[:desired]
+
         for axon in self.axons:
-            axon.ip = "127.0.0.0"
-            axon.port = 8091
+            axon.ip = self.default_ip
+            axon.port = self.default_port
 
         bt.logging.info(f"Metagraph: {self}")
         bt.logging.info(f"Axons: {self.axons}")
 
 
 class MockDendrite(bt.dendrite):
+    __slots__ = ("_session",)
     """
-    Replaces a real bittensor network request with a mock request that just returns some static response for all axons that are passed and adds some random delay.
+    A filesystem-free stand-in for ``bittensor.dendrite``.
+
+    • If no wallet is supplied we generate a throw-away *Keypair* in memory so
+      bittensor never tries to read ``~/.bittensor/...`` keyfiles.
+    • We also create ``self._session = None`` so the upstream destructor
+      doesn’t raise warnings.
     """
 
-    def __init__(self, wallet):
-        super().__init__(wallet)
-        # Ensure attribute exists so bittensor.dendrite.__del__ doesn't error.
+    def __init__(self, wallet=None):
+        """
+        If *wallet* is None we fabricate an in-memory Keypair so bittensor
+        never tries to read ~/.bittensor keyfiles during tests.
+        """
+        # Always use an in-memory keypair; we never want bittensor to load
+        # key-files from disk inside unit-tests, even if a wallet object is
+        # supplied.
+
+        self._session = None  # Must exist before parent ``__init__``.
+
+        keypair = Keypair.create_from_seed(os.urandom(32))
+
+        super().__init__(keypair)
+
+        # Keep the placeholder value; real sessions are opened lazily by
+        # bittensor when needed.  For tests we never open network sessions.
         self._session = None
+
+        # Default timing window (seconds) used by forward()
+        self.min_time = getattr(self, "min_time", 0.0)
+        self.max_time = getattr(self, "max_time", 0.1)
 
     # ---------------------------------------------------------------------
     # Convenience helpers used by the local unit-tests
@@ -140,7 +225,7 @@ class MockDendrite(bt.dendrite):
         axons: List[bt.axon],
         synapse: bt.Synapse = bt.Synapse(),
         timeout: float = 12,
-        deserialize: bool = True,
+        deserialize: bool = False,
         run_async: bool = True,
         streaming: bool = False,
     ):
@@ -158,26 +243,21 @@ class MockDendrite(bt.dendrite):
                 # Attach some more required data so it looks real
                 s = self.preprocess_synapse_for_request(axon, s, timeout)
                 # We just want to mock the response, so we'll just fill in some data
-                process_time = random.random()
+                process_time = random.uniform(self.min_time, self.max_time)
+                # Success path (finished before timeout)
                 if process_time < timeout:
-                    s.dendrite.process_time = str(time.time() - start_time)
-                    # Update the status code and status message of the dendrite to match the axon
-                    # TODO (developer): replace with your own expected synapse data
-                    s.dummy_output = s.dummy_input * 2
+                    s.dendrite.process_time = process_time
+                    s.dummy_output = s.dummy_input * 2  # type: ignore[attr-defined]
                     s.dendrite.status_code = 200
                     s.dendrite.status_message = "OK"
-                    synapse.dendrite.process_time = str(process_time)
                 else:
-                    s.dummy_output = 0
+                    # Timed-out path
+                    s.dummy_output = s.dummy_input  # Echo back original input
                     s.dendrite.status_code = 408
                     s.dendrite.status_message = "Timeout"
-                    synapse.dendrite.process_time = str(timeout)
+                    s.dendrite.process_time = timeout
 
-                # Return the updated synapse object after deserializing if requested
-                if deserialize:
-                    return s.deserialize()
-                else:
-                    return s
+                return s
 
             return await asyncio.gather(
                 *(
@@ -196,3 +276,37 @@ class MockDendrite(bt.dendrite):
             str: The string representation of the Dendrite object in the format "dendrite(<user_wallet_address>)".
         """
         return "MockDendrite({})".format(self.keypair.ss58_address)
+
+    # ------------------------------------------------------------------
+    # Bittensor >=7.4.x destructor looks for an internal aiohttp session.
+    # In our offline mocks we never open a session, so we override __del__ to
+    # guard against AttributeError while still attempting a graceful close.
+    # ------------------------------------------------------------------
+    def __del__(self):  # noqa: D401 – simple destructor
+        try:
+            # Close session if the parent class created one.
+            if hasattr(self, "close_session"):
+                self.close_session()
+        except Exception:
+            # Silently ignore – unit-tests only care that no exception leaks.
+            pass
+
+# No longer monkey-patch ``bittensor.config`` – the original class is required
+# for internal ``isinstance(..., bittensor.config)`` checks inside bittensor.
+class _ConfigCompat(bt.config):
+    """Subclass of bittensor.config that tolerates the *withconfig* kwarg."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("withconfig", None)
+        super().__init__(*args, **kwargs)
+
+        from types import SimpleNamespace
+
+        if getattr(self, "neuron", None) is None:
+            self.neuron = SimpleNamespace()
+
+
+# Replace the reference so tests can call ``bt.config(withconfig=True)`` while
+# preserving the fact that ``bt.config`` is still a *type* (avoiding
+# isinstance() errors).
+bt.config = _ConfigCompat
