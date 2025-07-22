@@ -13,6 +13,12 @@ The MIID codebase includes unit tests in the `tests/` directory:
 - `test_template_validator.py`: Tests for the validator functionality
 - `helpers.py`: Helper functions for testing
 
+> **Note**
+> The tests rely on the [`rich`](https://pypi.org/project/rich/) library for
+> capturing console output. It is included in `requirements.txt`. If you cannot
+> install external packages, a lightweight stub is provided in
+> `tests/helpers.py` that is used automatically when `rich` is missing.
+
 ### Running Tests
 
 To run all tests:

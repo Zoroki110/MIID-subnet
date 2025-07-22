@@ -29,8 +29,40 @@ from bittensor.mock.wallet_mock import get_mock_hotkey as _get_mock_hotkey
 from bittensor.mock.wallet_mock import get_mock_keypair as _get_mock_keypair
 from bittensor.mock.wallet_mock import get_mock_wallet as _get_mock_wallet
 
-from rich.console import Console
-from rich.text import Text
+try:
+    from rich.console import Console
+    from rich.text import Text
+except ModuleNotFoundError:  # pragma: no cover - stub for environments without rich
+    class Console:
+        """Minimal stub of rich.console.Console used for tests."""
+
+        def __init__(self, *args, **kwargs):
+            self._buffer = []
+
+        def begin_capture(self):
+            self._buffer = []
+
+        def print(self, *args, **kwargs):
+            self._buffer.append(" ".join(str(a) for a in args))
+
+        def end_capture(self):
+            output = "\n".join(self._buffer)
+            self._buffer = []
+            return output
+
+    class Text:
+        """Minimal stub of rich.text.Text used for tests."""
+
+        def __init__(self, text: str = ""):
+            self.plain = text
+
+        @staticmethod
+        def from_markup(text: str) -> "Text":
+            return Text(text)
+
+        @staticmethod
+        def from_ansi(text: str) -> "Text":
+            return Text(text)
 import bittensor as bt
 import torch
 from MIID.protocol import IdentitySynapse
