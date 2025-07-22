@@ -69,3 +69,22 @@ class IdentitySynapse(bt.Synapse):
         - Dict[str, List[str]]: Dictionary mapping each name to its list of variations
         """
         return self.variations
+
+
+class Dummy(bt.Synapse):
+    """A minimal synapse used by tests and examples.
+
+    Attributes
+    ----------
+    dummy_input : int
+        The integer sent by the requester.
+    dummy_output : Optional[int]
+        The integer returned by the responder, typically some deterministic
+        function of ``dummy_input``.
+    """
+    dummy_input: int
+    dummy_output: Optional[int] = None
+
+    def deserialize(self) -> Optional[int]:
+        """Return the output in its native python type."""
+        return self.dummy_output

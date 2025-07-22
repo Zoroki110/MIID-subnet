@@ -1,9 +1,8 @@
 import pytest
 import asyncio
 import bittensor as bt
-from prompting.mock import MockDendrite, MockMetagraph, MockSubtensor
-from prompting.protocol import PromptingSynapse
-from MIID.mock import MockDendrite
+from MIID.mock import MockDendrite, MockMetagraph, MockSubtensor
+from MIID.protocol import Dummy
 from tests.helpers import (
     get_mock_wallet,
     create_test_synapse,
@@ -73,11 +72,10 @@ def test_mock_dendrite_timings(timeout, min_time, max_time, n):
     axons = mock_metagraph.axons
 
     async def run():
+        # Use the simple Dummy synapse defined in MIID.protocol
         return await mock_dendrite(
             axons,
-            synapse=PromptingSynapse(
-                roles=["user"], messages=["What is the capital of France?"]
-            ),
+            synapse=Dummy(dummy_input=1),
             timeout=timeout,
         )
 

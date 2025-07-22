@@ -1,19 +1,21 @@
-starlette>=0.30.0
-pydantic>=2
-rich>=13
-pytest>=8
-torch>=2
-pandas
-tdqm
-numpy>=1
-setuptools>=68
-faker
-ollama
-python-Levenshtein
-jellyfish
-aiohttp
-substrate-interface
-bittensor
-bittensor-cli # Use latest or desired version
-wandb
-python-dotenv # Add dotenv for .env file handling
+# Starlette version bounded by FastAPI (<0.38.0, >=0.37.2)
+starlette>=0.37.2,<0.38.0
+pydantic==2.7.1
+rich==13.7.1
+pytest==8.2.2
+torch==2.3.0
+pandas==2.2.2
+tqdm==4.66.4
+numpy==1.26.4
+# NOTE: setuptools is pulled in indirectly; letting pip resolve an appropriate version avoids conflicts with bittensor which requires >=70.
+faker==24.8.0
+ollama==0.1.9
+python-Levenshtein==0.24.0
+jellyfish==1.0.4
+# aiohttp version is pulled transitively by bittensor and btcli (3.10.x).
+substrate-interface>=1.7.9
+bittensor==7.4.0
+# bittensor-cli version 8.4.4 is compatible with aiohttp 3.9.x (matches bittensor 7.4.0)
+bittensor-cli==8.4.4
+wandb==0.16.6
+python-dotenv==1.0.1

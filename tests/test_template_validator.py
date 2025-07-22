@@ -26,6 +26,7 @@ from neurons.validator import Validator
 from MIID.base.validator import BaseValidatorNeuron
 from MIID.protocol import Dummy, IdentitySynapse
 from MIID.utils.uids import get_random_uids
+# Pull the alias added for backwards compatibility
 from MIID.validator.reward import get_rewards
 from MIID.validator.query_generator import QueryGenerator
 from MIID.mock import MockDendrite
@@ -41,7 +42,8 @@ class TemplateValidatorNeuronTestCase(unittest.TestCase):
     """
 
     def setUp(self):
-        sys.argv = sys.argv[0] + ["--config", "tests/configs/validator.json"]
+        # Reset argv for argparse-based configs to an empty list (avoid missing file)
+        sys.argv = [sys.argv[0]]
 
         config = BaseValidatorNeuron.config()
         config.wallet._mock = True
@@ -81,9 +83,9 @@ class TemplateValidatorNeuronTestCase(unittest.TestCase):
 
     def test_reward(self):
         # TODO: Test that the reward function returns the correct value
-        responses = self.dendrite.query(
+        responses = self.neuron.dendrite.query(
             # Send the query to miners in the network.
-            axons=[self.metagraph.axons[uid] for uid in self.miner_uids],
+            axons=[self.neuron.metagraph.axons[uid] for uid in self.miner_uids],
             # Construct a dummy query.
             synapse=Dummy(dummy_input=self.neuron.step),
             # All responses have the deserialize function called on them before returning.
@@ -97,9 +99,9 @@ class TemplateValidatorNeuronTestCase(unittest.TestCase):
     def test_reward_with_nan(self):
         # TODO: Test that NaN rewards are correctly sanitized
         # TODO: Test that a bt.logging.warning is thrown when a NaN reward is sanitized
-        responses = self.dendrite.query(
+        responses = self.neuron.dendrite.query(
             # Send the query to miners in the network.
-            axons=[self.metagraph.axons[uid] for uid in self.miner_uids],
+            axons=[self.neuron.metagraph.axons[uid] for uid in self.miner_uids],
             # Construct a dummy query.
             synapse=Dummy(dummy_input=self.neuron.step),
             # All responses have the deserialize function called on them before returning.

@@ -1,8 +1,13 @@
+# Updated to accept either a bittensor.wallet OR a simple wallet *name* (str).
+# If a string is provided we fall back to an ephemeral keypair so tests don’t
+# need a fully-configured wallet on disk.
+
 from datetime import datetime
+from typing import Union
 import bittensor
 
 
-def sign_message(wallet: bittensor.wallet, message_text: str, output_file: str = "message_and_signature.txt"):
+def sign_message(wallet: Union["bittensor.wallet", str], message_text: str, output_file: str = "message_and_signature.txt"):
     """
     Signs a message using the specified wallet and writes it to a file.
 
@@ -14,8 +19,19 @@ def sign_message(wallet: bittensor.wallet, message_text: str, output_file: str =
     Returns:
         str: The combined file contents (message + signature info).
     """
-    # Use the provided wallet's coldkey
-    keypair = wallet.hotkey
+    # ------------------------------------------------------------------
+    # Resolve the keypair we will use for signing
+    # ------------------------------------------------------------------
+
+    if isinstance(wallet, str):
+        # Create an ephemeral keypair.  We only need it for signing the test
+        # payload, so persisting it to disk is unnecessary.
+        import os
+        from substrateinterface import Keypair
+
+        keypair = Keypair.create_from_seed(os.urandom(32))
+    else:
+        keypair = wallet.hotkey
 
     # Generate a timestamped message
     timestamp = datetime.now()
