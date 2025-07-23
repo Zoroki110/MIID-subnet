@@ -16,7 +16,7 @@ MIID validators:
 - Python 3.10 or higher
 - Git
 - A Bittensor wallet with TAO for staking
-- A local LLM via Ollama (default: llama3.1:latest)
+- A local LLM via Ollama (default: gpt-3.5-turbo via Chutes API)
 - Sufficient storage for challenge data and responses (minimum 10GB recommended)
 - Reliable internet connection
 - Weights & Biases account and API key (see [Weights & Biases Guide](weights_and_biases.md))
@@ -84,7 +84,9 @@ Visit [ollama.ai](https://ollama.ai) for installation instructions.
 
 5. Pull the default LLM model:
 ```bash
-ollama pull llama3.1:latest
+# The validator uses Chutes API with gpt-3.5-turbo, no local model installation needed
+# Make sure to set your CHUTES_API_KEY environment variable
+export CHUTES_API_KEY=your_api_key_here
 ```
 
 ## Installation Recommendations
@@ -120,7 +122,7 @@ You can configure your validator with the following command-line arguments:
 
 - `--neuron.timeout`: Base timeout for miner requests in seconds (default: 120)
 - `--neuron.sample_size`: Number of miners to query per step (default: 10)
-- `--neuron.ollama_model_name`: The Ollama model to use for verification (default: llama3.1:latest)
+- `--neuron.ollama_model_name`: The Chutes API model to use for verification (default: gpt-3.5-turbo)
 - `--neuron.logging.debug`: Enable debug logging
 
 Example with custom configuration:

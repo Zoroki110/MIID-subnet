@@ -151,29 +151,7 @@ install_python() {
 }
 
 # ---------------------------------------------------------
-# Section 3: Ollama Installation
-# Installs Ollama using the official script
-# ---------------------------------------------------------
-install_ollama() {
-  info_msg "Installing Ollama..."
-  if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh || handle_error "Failed to install Ollama"
-    success_msg "Ollama installed successfully."
-  else
-    info_msg "Ollama is already installed. Skipping."
-  fi
-  
-  pm2 start ollama -- serve
-  # Pull the required LLM model
-  info_msg "Pulling llama3.1:latest model..."
-  # Run ollama in background
-  
-  ollama pull llama3.1:latest || handle_error "Failed to pull llama3.1:latest model"
-  success_msg "llama3.1:latest model pulled successfully."
-}
-
-# ---------------------------------------------------------
-# Section 4: Virtual Environment Setup
+# Section 3: Virtual Environment Setup
 # Creates a new venv with Python, then activates it.
 # ---------------------------------------------------------
 create_and_activate_venv() {
@@ -192,7 +170,7 @@ create_and_activate_venv() {
 }
 
 # ---------------------------------------------------------
-# Section 5: Install Python Requirements
+# Section 4: Install Python Requirements
 # Installs project dependencies from requirements.txt.
 # ---------------------------------------------------------
 install_python_requirements() {
@@ -210,7 +188,7 @@ install_python_requirements() {
 }
 
 # ---------------------------------------------------------
-# Section 6: Install MIID in editable mode
+# Section 5: Install MIID in editable mode
 # ---------------------------------------------------------
 install_miid() {
   info_msg "Installing MIID package in editable mode..."
@@ -219,7 +197,7 @@ install_miid() {
 }
 
 # ---------------------------------------------------------
-# Section 7: Install Bittensor
+# Section 6: Install Bittensor
 # Uses the official install script for Bittensor.
 # ---------------------------------------------------------
 install_bittensor() {
@@ -245,7 +223,6 @@ main() {
   
   install_system_dependencies
   install_python
-  install_ollama
   create_and_activate_venv
   install_python_requirements
   install_miid

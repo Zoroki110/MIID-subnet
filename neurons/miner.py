@@ -100,11 +100,11 @@ class Miner(BaseMinerNeuron):
         
         # Initialize the LLM client
         # You can override this in your config by setting model_name
-        # Ensure we have a valid model name, defaulting to llama3.2:1b if not specified
-        self.model_name = getattr(self.config.neuron, 'model_name', None) if hasattr(self.config, 'neuron') else None
+        # Ensure we have a valid model name, defaulting to gpt-3.5-turbo if not specified
+        self.model_name = os.getenv("CHUTES_MODEL_NAME", getattr(self.config.neuron, 'model_name', None) or 'deepseek-ai/DeepSeek-R1')
         if self.model_name is None:
             #self.model_name = 'llama3.2:1b'
-            self.model_name = 'tinyllama:latest'
+            self.model_name = 'gpt-3.5-turbo'
             bt.logging.info(f"No model specified in config, using default model: {self.model_name}")
         
         bt.logging.info(f"Using LLM model: {self.model_name}")
@@ -113,6 +113,9 @@ class Miner(BaseMinerNeuron):
         if not self.chutes_token:
             bt.logging.warning("CHUTES_API_KEY environment variable not set")
         
+        self.api_base_url = os.getenv("CHUTES_API_BASE_URL", "https://llm.chutes.ai/v1")
+        bt.logging.info(f"Using LLM API base URL: {self.api_base_url}")
+
         # Create a directory for storing mining results
         # This helps with debugging and analysis
         self.output_path = os.path.join(self.config.logging.logging_dir, "mining_results")
@@ -229,10 +232,11 @@ class Miner(BaseMinerNeuron):
             "temperature": 0.7,   # Add some creativity but not too much
         }
 
+        api_url = f"{self.api_base_url}/chat/completions"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    "https://llm.chutes.ai/v1/chat/completions",
+                    api_url,
                     json=payload,
                     headers={
                         "Authorization": f"Bearer {self.chutes_token}",

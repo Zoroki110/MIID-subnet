@@ -13,7 +13,7 @@ MIID miners receive requests from validators containing names and a query templa
 
 - Python 3.10 or higher
 - A Bittensor wallet with TAO for registration
-- A local LLM via Ollama (default: llama3.1:latest)
+- A local LLM via Ollama (default: gpt-3.5-turbo via Chutes API)
 - Sufficient storage for model weights (~10GB or more depending on model)
 - At least 8GB RAM (16GB+ recommended)
 - Open port 8091 for validator communication ([Network Setup Guide](network_setup.md))
@@ -65,7 +65,9 @@ Visit [ollama.ai](https://ollama.ai) for installation instructions.
 
 4. Pull the default LLM model:
 ```bash
-ollama pull llama3.1:latest
+# The miner uses Chutes API with gpt-3.5-turbo, no local model installation needed
+# Make sure to set your CHUTES_API_KEY environment variable
+export CHUTES_API_KEY=your_api_key_here
 ```
 
 ## Installation Recommendations

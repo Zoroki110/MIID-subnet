@@ -347,7 +347,7 @@ async def forward(self):
         },
         "query_generation": {
             "use_default_query": query_generator.use_default_query,
-            "model_name": getattr(self.config.neuron, 'ollama_model_name', "llama3.1:latest"),
+            "model_name": getattr(self.config.neuron, 'ollama_model_name', "gpt-3.5-turbo"),
             "generation_time": challenge_end_time - challenge_start_time
                             },
         "responses": {},

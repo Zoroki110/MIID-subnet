@@ -255,7 +255,7 @@ class QueryGenerator:
                 rule_percentage = 30  # fallback for default
             
             # Generate a complex query template
-            model_name = getattr(self.config.neuron, 'ollama_model_name', "llama3.1:latest")
+            model_name = getattr(self.config.neuron, 'ollama_model_name', "gpt-3.5-turbo")
             query_template, query_labels = await self.generate_complex_query(
                 model_name=model_name,
                 variation_count=variation_count,

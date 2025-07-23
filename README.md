@@ -60,7 +60,7 @@ Validators ensure the dataset maintains **high-quality** and **real-world releva
 
 ### Prerequisites
 - **Python 3.10+**
-- **Ollama (default LLM: llama3.1)**
+- **Chutes API (default LLM: gpt-3.5-turbo)**
 - **Bittensor wallet with TAO**
 - **8GB+ RAM (16GB recommended)**
 - **Open port 8091 for miner-to-validator communication** ([Network Setup Guide](docs/network_setup.md))

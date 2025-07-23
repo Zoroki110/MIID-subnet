@@ -148,9 +148,9 @@ install_ollama() {
   # Use pm2 to serve Ollama (mirrors miner script)
   pm2 start ollama -- serve || warn_msg "Failed to start Ollama with PM2, but continuing..."
   
-  info_msg "Pulling llama3.1:latest model..."
-  ollama pull llama3.1:latest || handle_error "Failed to pull llama3.1:latest model"
-  success_msg "llama3.1:latest model pulled successfully."
+  info_msg "Pulling deepseek-coder:6.7b model..."
+  ollama pull deepseek-coder:6.7b || handle_error "Failed to pull deepseek-coder:6.7b model"
+  success_msg "deepseek-coder:6.7b model pulled successfully."
 }
 
 # ---------------------------------------------------------

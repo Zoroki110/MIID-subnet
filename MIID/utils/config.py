@@ -144,8 +144,8 @@ def add_miner_args(cls, parser):
     parser.add_argument(
         "--neuron.model_name",
         type=str,
-        help="The Ollama model to use (default: tinyllama:latest)",
-        default="tinyllama:latest",
+        help="The Chutes API model to use (default: gpt-3.5-turbo)",
+        default="gpt-3.5-turbo",
     )
 
     parser.add_argument(
@@ -306,7 +306,7 @@ def add_validator_args(cls, parser):
             "--neuron.ollama_model_name",
             type=str,
             help="Model name to use with ollama",
-            default="llama3.1:latest",
+            default="gpt-3.5-turbo",
         )
     parser.add_argument(
         "--neuron.ollama_request_timeout",
