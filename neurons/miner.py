@@ -49,6 +49,7 @@ different runs and facilitate analysis of results over time.
 
 import time
 import typing
+import asyncio
 import bittensor as bt
 import aiohttp
 import pandas as pd
@@ -122,6 +123,25 @@ class Miner(BaseMinerNeuron):
         os.makedirs(self.output_path, exist_ok=True)
         bt.logging.info(f"Mining results will be saved to: {self.output_path}")
 
+        # Maximum number of names to query in a single LLM request. Large
+        # batches tend to produce truncated or malformed responses, so we
+        # split incoming requests into manageable chunks. The default can be
+        # overridden with the NAMES_PER_BATCH environment variable.
+        self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 8))
+
+    def build_prompt(self, names: List[str]) -> str:
+        """Create a concise prompt requesting 13 variations per name."""
+        bullet_points = [
+            "Provide exactly 13 variants for each name",
+            "About half should sound similar and half should look similar",
+            "Use a mix of: vowel swap, consonant drop and extra letter",
+            "Output format: name:var1,var2,...;name2:var1,var2,...",
+            "Respond only with the formatted list"
+        ]
+        instructions = "\n".join(f"{i+1}. {bp}" for i, bp in enumerate(bullet_points))
+        names_text = ", ".join(names)
+        return f"For these names: {names_text}\n{instructions}"
+
     async def forward(self, synapse: IdentitySynapse) -> IdentitySynapse:
         """
         Process a name variation request by generating variations for all names in a single batch.
@@ -166,41 +186,21 @@ class Miner(BaseMinerNeuron):
             synapse.variations = {}
             return synapse
         
-        # Create a simplified batch prompt for all names
         try:
-            bt.logging.info(f"Generating variations for {len(synapse.names)} names in batch, remaining time: {remaining:.1f}s")
-            
-            # Create a simple, concise prompt for batch processing
-            names_text = ", ".join(synapse.names)
-            batch_prompt = f"Generate 5-10 comma-separated alternative spellings for each name: {names_text}. Return format: name1:var1,var2,var3;name2:var1,var2,var3"
-            
-            # Query the LLM with the batch prompt
-            batch_response = await self.Get_Respond_LLM(batch_prompt)
-            
-            # Process the batch response to extract variations
-            variations = self.process_batch_response(batch_response, synapse.names, run_id, run_dir)
-            
-            # Check if we got variations for all names
-            if len(variations) == len(synapse.names):
-                bt.logging.info(f"Batch processing successful for all {len(synapse.names)} names")
-            else:
-                bt.logging.warning(f"Batch processing incomplete: {len(variations)}/{len(synapse.names)} names processed")
-                # Try individual processing for missing names
-                variations = await self.fallback_individual_processing(synapse.names, variations, remaining, run_id, run_dir)
-            
-            bt.logging.info(f"======== FINAL VARIATIONS===============================================: {variations}")
-            # Set the variations in the synapse for return to the validator
+            # Split the full request into smaller batches to avoid overly long
+            # prompts that can lead to truncated or malformed LLM responses.
+            bt.logging.info(
+                f"Generating variations in batches of {self.names_per_batch} names"
+            )
+
+            variations = await self.process_name_batches(synapse.names, run_id, run_dir)
+
+            # Store results back on the synapse
             synapse.variations = variations
-            
+
         except Exception as e:
             bt.logging.error(f"Error in batch processing: {str(e)}")
-            # Fallback to individual processing
-            try:
-                variations = await self.fallback_individual_processing(synapse.names, {}, remaining, run_id, run_dir)
-                synapse.variations = variations
-            except Exception as fallback_error:
-                bt.logging.error(f"Fallback processing also failed: {str(fallback_error)}")
-                synapse.variations = {}
+            synapse.variations = {}
         
         # Log final timing information
         total_time = time.time() - start_time
@@ -209,14 +209,14 @@ class Miner(BaseMinerNeuron):
             f"Processed {len(synapse.names)} names in batch."
         )
         
-        bt.logging.info(f"======== SYNAPSE VARIATIONS===============================================: {synapse.variations}")
-        bt.logging.info(f"==========================Processed variations for {len(synapse.variations)} names in run {run_id}")
-        bt.logging.info(f"==========================Synapse: {synapse}")
-        bt.logging.info("========================================================================================")
+        bt.logging.debug(f"======== SYNAPSE VARIATIONS===============================================: {synapse.variations}")
+        bt.logging.debug(f"==========================Processed variations for {len(synapse.variations)} names in run {run_id}")
+        bt.logging.debug(f"==========================Synapse: {synapse}")
+        bt.logging.debug("End of request")
         return synapse
 
 
-    async def Get_Respond_LLM(self, prompt: str) -> str:
+    async def Get_Respond_LLM(self, prompt: str, retries: int = 3) -> str:
         """
         Query the LLM using the Chutes API.
 
@@ -233,40 +233,39 @@ class Miner(BaseMinerNeuron):
         }
 
         api_url = f"{self.api_base_url}/chat/completions"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    api_url,
-                    json=payload,
-                    headers={
-                        "Authorization": f"Bearer {self.chutes_token}",
-                        "Content-Type": "application/json",
-                    },
-                    timeout=aiohttp.ClientTimeout(total=30),  # Reduced timeout
-                ) as r:
-                    if r.status != 200:
-                        bt.logging.error(f"LLM API error: {r.status} - {await r.text()}")
-                        raise Exception(f"API returned status {r.status}")
-                    
-                    data = await r.json()
-                    
-                    # Check if the response has the expected structure
-                    if "choices" not in data or not data["choices"]:
-                        bt.logging.error(f"Unexpected LLM response structure: {data}")
-                        raise Exception("Invalid response structure")
-                    
-                    content = data["choices"][0]["message"]["content"]
-                    if not content or content.strip() == "":
-                        raise Exception("Empty response from LLM")
-                    
-                    return content.strip()
-                    
-        except aiohttp.ClientError as e:
-            bt.logging.error(f"Network error in LLM query: {str(e)}")
-            raise
-        except Exception as e:
-            bt.logging.error(f"LLM query failed: {str(e)}")
-            raise
+        backoff = 1
+        for attempt in range(retries):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        api_url,
+                        json=payload,
+                        headers={
+                            "Authorization": f"Bearer {self.chutes_token}",
+                            "Content-Type": "application/json",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as r:
+                        if r.status != 200:
+                            raise Exception(f"API returned status {r.status}: {await r.text()}")
+
+                        data = await r.json()
+
+                        if "choices" not in data or not data["choices"]:
+                            raise Exception("Invalid response structure")
+
+                        content = data["choices"][0]["message"]["content"].strip()
+                        if not content:
+                            raise Exception("Empty response from LLM")
+
+                        return content
+            except Exception as e:
+                if attempt == retries - 1:
+                    bt.logging.error(f"LLM query failed after {retries} attempts: {str(e)}")
+                    raise
+                bt.logging.warning(f"LLM request failed ({e}), retrying in {backoff}s")
+                await asyncio.sleep(backoff)
+                backoff *= 2
 
 
     def process_variations(self, Response_list: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
@@ -307,29 +306,83 @@ class Miner(BaseMinerNeuron):
                 # Filter out empty or NaN variations
                 variations = [var for var in llm_respond[2] if not pd.isna(var) and var != ""]
                 
-                # Clean each variation before storing
+                # Clean and deduplicate variations
                 cleaned_variations = []
                 for var in variations:
-                    # Remove unwanted characters
-                    cleaned_var = var.replace(")", "").replace("(", "").replace("]", "").replace("[", "").replace(",", "")
-                    # Remove leading/trailing whitespace
-                    cleaned_var = cleaned_var.strip()
-                    # Only add non-empty variations
+                    cleaned_var = var.replace(")", "").replace("(", "").replace("]", "").replace("[", "").replace(",", "").strip()
                     if cleaned_var:
                         cleaned_variations.append(cleaned_var)
-                
-                # Store the cleaned variations for this name
+
+                cleaned_variations = self.deduplicate_and_limit(name, cleaned_variations)
                 name_variations[name] = cleaned_variations
-                bt.logging.info(f"=================== Name variations: {name_variations}")
-                
-                bt.logging.info(f"Processed {len(cleaned_variations)} variations for {name}")
+                bt.logging.debug(f"Name variations: {name_variations}")
+
+                bt.logging.debug(f"Processed {len(cleaned_variations)} variations for {name}")
             except Exception as e:
                 bt.logging.error(f"Error processing response {i}: {e}")
         
         # # Save processed variations to JSON for debugging and analysis
         # self.save_variations_to_json(name_variations, run_id, run_dir)
-        
+
         return name_variations
+
+    def deduplicate_and_limit(self, seed: str, variations: List[str], count: int = 13) -> List[str]:
+        """Remove duplicates and enforce a fixed number of variations."""
+        seen = set()
+        cleaned = []
+        for var in variations:
+            v = var.strip()
+            if not v or v.lower() == seed.lower():
+                continue
+            if v.lower() not in seen:
+                seen.add(v.lower())
+                cleaned.append(v)
+            if len(cleaned) == count:
+                return cleaned
+
+        # Deterministic fallbacks if not enough variations
+        extras = [seed + "e", seed + "y", seed[:-1] if len(seed) > 3 else seed]
+        for extra in extras:
+            if len(cleaned) >= count:
+                break
+            v = extra.strip()
+            if v.lower() not in seen:
+                seen.add(v.lower())
+                cleaned.append(v)
+
+        return cleaned[:count]
+
+    async def process_single_batch(self, batch_names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
+        """Query the LLM for a batch of names and parse the response."""
+        prompt = self.build_prompt(batch_names)
+        response = await self.Get_Respond_LLM(prompt)
+        variations = self.process_batch_response(response, batch_names, run_id, run_dir)
+        for name in batch_names:
+            if name not in variations:
+                variations[name] = self.deduplicate_and_limit(name, [])
+        return variations
+
+    async def process_name_batches(self, names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
+        """Process the entire list of names in parallel batches."""
+        tasks = []
+        batches = []
+        for i in range(0, len(names), self.names_per_batch):
+            batch = names[i : i + self.names_per_batch]
+            batches.append(batch)
+            tasks.append(self.process_single_batch(batch, run_id, run_dir))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        variations: Dict[str, List[str]] = {}
+        for batch, result in zip(batches, results):
+            if isinstance(result, Exception):
+                bt.logging.error(f"Batch failed: {result}")
+                for name in batch:
+                    variations[name] = self.deduplicate_and_limit(name, [])
+            else:
+                variations.update(result)
+
+        return variations
     
     def process_batch_response(self, batch_response: str, original_names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
         """
@@ -376,8 +429,9 @@ class Miner(BaseMinerNeuron):
                                 variations.append(cleaned_var)
                         
                         if name and variations:
-                            name_variations[name] = variations
-                            bt.logging.info(f"Extracted {len(variations)} variations for {name}")
+                            cleaned = self.deduplicate_and_limit(name, variations)
+                            name_variations[name] = cleaned
+                            bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
             
             # If the expected format didn't work, try alternative parsing
             if not name_variations:
@@ -415,8 +469,9 @@ class Miner(BaseMinerNeuron):
                                 break
                     
                     if variations:
-                        name_variations[name] = variations
-                        bt.logging.info(f"Extracted {len(variations)} variations for {name}")
+                        cleaned = self.deduplicate_and_limit(name, variations)
+                        name_variations[name] = cleaned
+                        bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
             
             # If still no variations found, create a fallback response
             if not name_variations:
@@ -436,8 +491,9 @@ class Miner(BaseMinerNeuron):
                             variations.append(name[:-1] + "ie")
                     
                     if variations:
-                        name_variations[name] = variations
-                        bt.logging.info(f"Created {len(variations)} fallback variations for {name}")
+                        cleaned = self.deduplicate_and_limit(name, variations)
+                        name_variations[name] = cleaned
+                        bt.logging.info(f"Created {len(cleaned)} fallback variations for {name}")
             
             bt.logging.info(f"Successfully processed variations for {len(name_variations)} names")
             
@@ -445,7 +501,8 @@ class Miner(BaseMinerNeuron):
             bt.logging.error(f"Error processing batch response: {e}")
             # Create minimal fallback variations
             for name in original_names:
-                name_variations[name] = [name + "e", name + "y"]
+                fallback_vars = [name + "e", name + "y"]
+                name_variations[name] = self.deduplicate_and_limit(name, fallback_vars)
         
         return name_variations
 
@@ -487,7 +544,10 @@ class Miner(BaseMinerNeuron):
             
             try:
                 # Simple prompt for individual processing
-                simple_prompt = f"Generate 5-8 comma-separated alternative spellings for: {name}"
+                simple_prompt = (
+                    f"Generate 5-8 comma-separated alternative spellings for {name}. "
+                    "Respond only with the names"
+                )
                 
                 # Query LLM with shorter timeout
                 response = await self.Get_Respond_LLM(simple_prompt)
@@ -500,17 +560,20 @@ class Miner(BaseMinerNeuron):
                         response_variations.append(cleaned_var)
                 
                 if response_variations:
-                    variations[name] = response_variations
-                    bt.logging.info(f"Fallback processed {name}: {len(response_variations)} variations")
+                    cleaned = self.deduplicate_and_limit(name, response_variations)
+                    variations[name] = cleaned
+                    bt.logging.info(f"Fallback processed {name}: {len(cleaned)} variations")
                 else:
                     # Create basic fallback variations
-                    variations[name] = [name + "e", name + "y"]
+                    basic = [name + "e", name + "y"]
+                    variations[name] = self.deduplicate_and_limit(name, basic)
                     bt.logging.info(f"Created basic fallback variations for {name}")
                 
             except Exception as e:
                 bt.logging.error(f"Error processing {name} in fallback: {str(e)}")
                 # Create basic fallback variations
-                variations[name] = [name + "e", name + "y"]
+                basic = [name + "e", name + "y"]
+                variations[name] = self.deduplicate_and_limit(name, basic)
         
         return variations
 
@@ -530,9 +593,9 @@ class Miner(BaseMinerNeuron):
             run_id: Unique identifier for this processing run
             run_dir: Directory to save run-specific files
         """
-        bt.logging.info(f"=================== Name variations: {name_variations}")
-        bt.logging.info(f"=================== Run ID: {run_id}")
-        bt.logging.info(f"=================== Run directory: {run_dir}")
+        bt.logging.debug(f"Name variations: {name_variations}")
+        bt.logging.debug(f"Run ID: {run_id}")
+        bt.logging.debug(f"Run directory: {run_dir}")
         bt.logging.info("Saving variations to JSON and DataFrame")
 
         # Find the maximum number of variations for any name
