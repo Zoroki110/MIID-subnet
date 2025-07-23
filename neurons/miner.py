@@ -55,6 +55,7 @@ import aiohttp
 import pandas as pd
 import os
 import numpy as np
+import re
 from typing import List, Dict, Tuple, Any, Optional
 from tqdm import tqdm
 
@@ -128,22 +129,32 @@ class Miner(BaseMinerNeuron):
         # can be overridden with the NAMES_PER_BATCH environment variable.
         self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 8))
 
-    def build_prompt(self, names: List[str]) -> str:
+        # Number of variations to generate for each name. Can be overridden
+        # with the VARIATION_COUNT environment variable or the
+        # --neuron.variation_count CLI argument.
+        self.variation_count = int(
+            os.getenv(
+                "VARIATION_COUNT",
+                getattr(self.config.neuron, "variation_count", 13),
+            )
+        )
+
+    def build_prompt(self, names: List[str], variation_count: int = 13) -> str:
         """Create a concise prompt requesting name variations with clear format and a precise example."""
         bullet_points = [
-            "Provide around 13 variants for each name (a few more or less is acceptable)",
+            f"Provide {variation_count} variants for each name",
             "About half should sound similar and half should look similar",
-            "Use a mix of: vowel swap, consonant drop, and extra letter",
-            "Output format: name:var1,var2,...;name2:var1,var2,...",
-            "Respond only with the formatted list. Do not include any explanations, comments, or extra text.",
-            "Separate each name’s output with a semicolon (;) and do not use newlines."
+            "Use a mix of vowel swap, consonant drop, and extra letter",
+            "Output format: name:var1,var2,...; name2:var1,var2,...",
+            "Respond only with the formatted list. Do not include explanations or extra text",
+            "Separate each name's output with a semicolon (;) and do not use new lines"
         ]
-        instructions = "\n".join(f"{i+1}. {bp}" for i, bp in enumerate(bullet_points))
+        instructions = " ".join(bp.rstrip('.').rstrip() + '.' for bp in bullet_points)
         names_text = ", ".join(names)
         example = (
             "Example:\n"
-            "alexander:aleksander,alexandre,alecsander,aleksandr,alexandor,alexandyr,alixander,alexandor,alexandyr,alexandor,alecsandr,alecsandor,alecsandyr;"
-            "sophia:sophya,sofia,soffia,sophiya,sophea,sophiya,soffiya,sophiah,sophina,sophiyaa,sophina,sophiya,sophina"
+            "alexander:aleksandr,alexandre,alexandar,alexandor,alexender,alixander,alexandyr,alecksander,alexandr,alexandru,alexandarh,alejander,alexannder; "
+            "sophia:sophiaa,sofia,soffia,sophiya,sophya,sofea,soffiya,soophia,sofiya,sophiah,sofiah,sophina,sopheeah"
         )
         return f"For these names: {names_text}\n{instructions}\n{example}"
 
@@ -331,8 +342,11 @@ class Miner(BaseMinerNeuron):
 
         return name_variations
 
-    def deduplicate_and_limit(self, seed: str, variations: List[str], count: int = 13) -> List[str]:
+    def deduplicate_and_limit(self, seed: str, variations: List[str], count: Optional[int] = None) -> List[str]:
         """Remove duplicates and enforce a fixed number of variations."""
+        if count is None:
+            count = self.variation_count
+
         seen = set()
         cleaned = []
         for var in variations:
@@ -382,31 +396,17 @@ class Miner(BaseMinerNeuron):
         try:
             # Clean the response
             cleaned_response = batch_response.strip()
-            
-            # Try to parse the expected format: "name1:var1,var2,var3;name2:var1,var2,var3"
-            if ":" in cleaned_response and ";" in cleaned_response:
-                # Split by semicolon to get each name's variations
-                name_blocks = cleaned_response.split(";")
-                
-                for block in name_blocks:
-                    if ":" in block:
-                        name_part, variations_part = block.split(":", 1)
-                        name = name_part.strip()
-                        variations_text = variations_part.strip()
-                        
-                        # Split variations by comma and clean them
-                        variations = []
-                        for var in variations_text.split(","):
-                            cleaned_var = var.strip()
-                            if cleaned_var and cleaned_var not in variations:
-                                variations.append(cleaned_var)
-                        
-                        if name and variations:
-                            cleaned = self.deduplicate_and_limit(name, variations)
-                            name_variations[name] = cleaned
-                            bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
-            
-            # If the expected format didn't work, try alternative parsing
+
+            pattern = r"(.*?)\s*:\s*([^;\n]+)"
+            for name_part, variations_part in re.findall(pattern, cleaned_response):
+                name = name_part.strip()
+                var_tokens = [v.strip() for v in variations_part.split(',') if v.strip()]
+                if name and var_tokens:
+                    cleaned = self.deduplicate_and_limit(name, var_tokens)
+                    name_variations[name] = cleaned
+                    bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
+
+            # If the regex did not produce results, try alternative parsing
             if not name_variations:
                 bt.logging.warning("Expected format not found, trying alternative parsing")
                 
@@ -552,7 +552,7 @@ class Miner(BaseMinerNeuron):
 
     async def process_single_batch(self, batch_names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
         """Query the LLM for a batch of names and parse the response."""
-        prompt = self.build_prompt(batch_names)
+        prompt = self.build_prompt(batch_names, self.variation_count)
         response = await self.Get_Respond_LLM(prompt)
         variations = self.process_batch_response(response, batch_names, run_id, run_dir)
         for name in batch_names:
