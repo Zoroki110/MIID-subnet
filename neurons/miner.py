@@ -129,22 +129,32 @@ class Miner(BaseMinerNeuron):
         # overridden with the NAMES_PER_BATCH environment variable.
         self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 8))
 
-    def build_prompt(self, names: List[str]) -> str:
+        # Number of variations to generate for each name. Can be overridden
+        # with the VARIATION_COUNT environment variable or the
+        # --neuron.variation_count CLI argument.
+        self.variation_count = int(
+            os.getenv(
+                "VARIATION_COUNT",
+                getattr(self.config.neuron, "variation_count", 13),
+            )
+        )
+
+    def build_prompt(self, names: List[str], variation_count: int = 13) -> str:
         """Create a concise prompt requesting name variations with clear format and a precise example."""
         bullet_points = [
-            "Provide around 13 variants for each name (a few more or less is acceptable)",
+            f"Provide {variation_count} variants for each name",
             "About half should sound similar and half should look similar",
-            "Use a mix of: vowel swap, consonant drop, and extra letter",
-            "Output format: name:var1,var2,...;name2:var1,var2,...",
-            "Respond only with the formatted list. Do not include any explanations, comments, or extra text.",
-            "Separate each name’s output with a semicolon (;) and do not use newlines."
+            "Use a mix of vowel swap, consonant drop, and extra letter",
+            "Output format: name:var1,var2,...; name2:var1,var2,...",
+            "Respond only with the formatted list. Do not include explanations or extra text",
+            "Separate each name's output with a semicolon (;) and do not use new lines"
         ]
-        instructions = "\n".join(f"{i+1}. {bp}" for i, bp in enumerate(bullet_points))
+        instructions = " ".join(bp.rstrip('.').rstrip() + '.' for bp in bullet_points)
         names_text = ", ".join(names)
         example = (
             "Example:\n"
-            "alexander:aleksander,alexandre,alecsander,aleksandr,alexandor,alexandyr,alixander,alexandor,alexandyr,alexandor,alecsandr,alecsandor,alecsandyr;"
-            "sophia:sophya,sofia,soffia,sophiya,sophea,sophiya,soffiya,sophiah,sophina,sophiyaa,sophina,sophiya,sophina"
+            "alexander:aleksandr,alexandre,alexandar,alexandor,alexender,alixander,alexandyr,alecksander,alexandr,alexandru,alexandarh,alejander,alexannder; "
+            "sophia:sophiaa,sofia,soffia,sophiya,sophya,sofea,soffiya,soophia,sofiya,sophiah,sofiah,sophina,sopheeah"
         )
         return f"For these names: {names_text}\n{instructions}\n{example}"
 
@@ -331,8 +341,11 @@ class Miner(BaseMinerNeuron):
 
         return name_variations
 
-    def deduplicate_and_limit(self, seed: str, variations: List[str], count: int = 13) -> List[str]:
+    def deduplicate_and_limit(self, seed: str, variations: List[str], count: Optional[int] = None) -> List[str]:
         """Remove duplicates and enforce a fixed number of variations."""
+        if count is None:
+            count = self.variation_count
+
         seen = set()
         cleaned = []
         for var in variations:
@@ -552,7 +565,7 @@ class Miner(BaseMinerNeuron):
 
     async def process_single_batch(self, batch_names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
         """Query the LLM for a batch of names and parse the response."""
-        prompt = self.build_prompt(batch_names)
+        prompt = self.build_prompt(batch_names, self.variation_count)
         response = await self.Get_Respond_LLM(prompt)
         variations = self.process_batch_response(response, batch_names, run_id, run_dir)
         for name in batch_names:

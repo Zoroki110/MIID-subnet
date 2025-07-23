@@ -113,6 +113,7 @@ For running your miner in the background (recommended for production), see the [
 You can configure your miner with the following command-line arguments:
 
 - `--neuron.model_name`: The Ollama model to use (default: tinyllama:latest)
+- `--neuron.variation_count`: Number of variations generated for each name (default: 13)
 - `--neuron.logging.debug`: Enable debug logging
 - `--neuron.log_responses`: Save miner responses for analysis
 - `--neuron.response_cache_dir`: Directory to store response logs
