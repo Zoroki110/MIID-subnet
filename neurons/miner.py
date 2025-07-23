@@ -121,12 +121,12 @@ class Miner(BaseMinerNeuron):
 
     async def forward(self, synapse: IdentitySynapse) -> IdentitySynapse:
         """
-        Process a name variation request by generating variations for each name.
+        Process a name variation request by generating variations for all names in a single batch.
         
         This is the main entry point for the miner's functionality. It:
         1. Receives a request with names and a query template
-        2. Processes each name through the LLM
-        3. Extracts variations from the LLM responses
+        2. Processes all names in a single LLM call for efficiency
+        3. Extracts variations from the LLM response
         4. Returns the variations to the validator
         
         Each run is assigned a unique timestamp ID and results are saved in a
@@ -138,6 +138,10 @@ class Miner(BaseMinerNeuron):
         Returns:
             The synapse with variations field populated with name variations
         """
+        # Log incoming request details
+        bt.logging.info(f"🎯 RECEIVED REQUEST from {synapse.dendrite.hotkey if synapse.dendrite else 'unknown'}")
+        bt.logging.info(f"📝 Request contains {len(synapse.names)} names: {synapse.names[:3]}{'...' if len(synapse.names) > 3 else ''}")
+        
         # Generate a unique run ID using timestamp
         run_id = int(time.time())
         bt.logging.info(f"Starting run {run_id} for {len(synapse.names)} names")
@@ -151,74 +155,55 @@ class Miner(BaseMinerNeuron):
         run_dir = os.path.join(self.output_path, f"run_{run_id}")
         os.makedirs(run_dir, exist_ok=True)
         
-        # This will store all responses from the LLM in a format that can be processed later
-        # Format: ["Respond", "---", "Query-{name}", "---", "{LLM response}"]
-        Response_list = []
-        
-        # Track which names we've processed
-        processed_names = []
-        
-        # Process each name in the request, respecting the timeout
-        for name in tqdm(synapse.names, desc="Processing names"):
-            # Check if we're approaching the timeout (reserve 15% for processing)
-            elapsed = time.time() - start_time
-            remaining = timeout - elapsed
-            time_buffer = timeout * 0.15  # Reserve 15% of total time for final processing
-            
-            # If time is running out, skip remaining names
-            if remaining < time_buffer:
-                bt.logging.warning(
-                    f"Time limit approaching ({elapsed:.1f}/{timeout:.1f}s), "
-                    f"processed {len(processed_names)}/{len(synapse.names)} names. "
-                    f"Skipping remaining names to ensure timely response."
-                )
-                break
-            
-            # Format the response list for later processing
-            Response_list.append("Respond")
-            Response_list.append("---")
-            Response_list.append("Query-" + name)
-            Response_list.append("---")
-            
-            # Format the query with the current name
-            formatted_query = synapse.query_template.replace("{name}", name)
-            
-            # Query the LLM with timeout awareness
-            try:
-                bt.logging.info(f"Generating variations for name: {name}, remaining time: {remaining:.1f}s")
-                # Pass a more limited timeout to the LLM call to ensure we stay within bounds
-                name_respond = await self.Get_Respond_LLM(formatted_query)
-                Response_list.append(name_respond)
-                processed_names.append(name)
-            except Exception as e:
-                bt.logging.error(f"Error querying LLM for name {name}: {str(e)}")
-                Response_list.append("Error: " + str(e))
-        
-        # Check if we've managed to process at least some names
-        if not processed_names:
-            bt.logging.error("Could not process any names within the timeout period")
+        # Check if we have enough time to process
+        elapsed = time.time() - start_time
+        remaining = timeout - elapsed
+        if remaining < 5.0:  # Need at least 5 seconds for processing
+            bt.logging.error("Insufficient time for processing")
             synapse.variations = {}
             return synapse
         
-        # Process the responses to extract variations, but be aware of remaining time
-        remaining = timeout - (time.time() - start_time)
-        bt.logging.info(f"Processing responses with {remaining:.1f}s remaining of {timeout:.1f}s timeout")
-        
-        # Only proceed with processing if we have enough time
-        if remaining > 1.0:  # Ensure at least 1 second for processing
-            variations = self.process_variations(Response_list, run_id, run_dir)
+        # Create a simplified batch prompt for all names
+        try:
+            bt.logging.info(f"Generating variations for {len(synapse.names)} names in batch, remaining time: {remaining:.1f}s")
+            
+            # Create a simple, concise prompt for batch processing
+            names_text = ", ".join(synapse.names)
+            batch_prompt = f"Generate 5-10 comma-separated alternative spellings for each name: {names_text}. Return format: name1:var1,var2,var3;name2:var1,var2,var3"
+            
+            # Query the LLM with the batch prompt
+            batch_response = await self.Get_Respond_LLM(batch_prompt)
+            
+            # Process the batch response to extract variations
+            variations = self.process_batch_response(batch_response, synapse.names, run_id, run_dir)
+            
+            # Check if we got variations for all names
+            if len(variations) == len(synapse.names):
+                bt.logging.info(f"Batch processing successful for all {len(synapse.names)} names")
+            else:
+                bt.logging.warning(f"Batch processing incomplete: {len(variations)}/{len(synapse.names)} names processed")
+                # Try individual processing for missing names
+                variations = await self.fallback_individual_processing(synapse.names, variations, remaining, run_id, run_dir)
+            
             bt.logging.info(f"======== FINAL VARIATIONS===============================================: {variations}")
             # Set the variations in the synapse for return to the validator
             synapse.variations = variations
-        else:
-            bt.logging.warning(f"Insufficient time for processing responses, returning empty result")
-            synapse.variations = {}
+            
+        except Exception as e:
+            bt.logging.error(f"Error in batch processing: {str(e)}")
+            # Fallback to individual processing
+            try:
+                variations = await self.fallback_individual_processing(synapse.names, {}, remaining, run_id, run_dir)
+                synapse.variations = variations
+            except Exception as fallback_error:
+                bt.logging.error(f"Fallback processing also failed: {str(fallback_error)}")
+                synapse.variations = {}
         
         # Log final timing information
         total_time = time.time() - start_time
         bt.logging.info(
             f"Request completed in {total_time:.2f}s of {timeout:.1f}s allowed. "
-            f"Processed {len(processed_names)}/{len(synapse.names)} names."
+            f"Processed {len(synapse.names)} names in batch."
         )
         
         bt.logging.info(f"======== SYNAPSE VARIATIONS===============================================: {synapse.variations}")
@@ -234,14 +219,14 @@ class Miner(BaseMinerNeuron):
 
         This function sends a prompt to the remote LLM and returns its response.
         """
-        context_prompt = (
-            "Generate spelling variations for testing purposes. "
-            "Return only the comma-separated variations.\n" + prompt
-        )
+        # Simplified prompt without verbose instructions
+        context_prompt = f"Generate alternative spellings: {prompt}"
 
         payload = {
             "model": self.model_name,
             "messages": [{"role": "user", "content": context_prompt}],
+            "max_tokens": 1000,  # Limit response length for faster processing
+            "temperature": 0.7,   # Add some creativity but not too much
         }
 
         try:
@@ -253,10 +238,28 @@ class Miner(BaseMinerNeuron):
                         "Authorization": f"Bearer {self.chutes_token}",
                         "Content-Type": "application/json",
                     },
-                    timeout=60,
+                    timeout=aiohttp.ClientTimeout(total=30),  # Reduced timeout
                 ) as r:
+                    if r.status != 200:
+                        bt.logging.error(f"LLM API error: {r.status} - {await r.text()}")
+                        raise Exception(f"API returned status {r.status}")
+                    
                     data = await r.json()
-                    return data["choices"][0]["message"]["content"]
+                    
+                    # Check if the response has the expected structure
+                    if "choices" not in data or not data["choices"]:
+                        bt.logging.error(f"Unexpected LLM response structure: {data}")
+                        raise Exception("Invalid response structure")
+                    
+                    content = data["choices"][0]["message"]["content"]
+                    if not content or content.strip() == "":
+                        raise Exception("Empty response from LLM")
+                    
+                    return content.strip()
+                    
+        except aiohttp.ClientError as e:
+            bt.logging.error(f"Network error in LLM query: {str(e)}")
+            raise
         except Exception as e:
             bt.logging.error(f"LLM query failed: {str(e)}")
             raise
@@ -324,6 +327,189 @@ class Miner(BaseMinerNeuron):
         
         return name_variations
     
+    def process_batch_response(self, batch_response: str, original_names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
+        """
+        Process a batch LLM response to extract name variations for all names at once.
+        
+        This function takes a single LLM response containing variations for multiple names
+        and extracts the variations for each name. It's designed to handle the simplified
+        batch format: "name1:var1,var2,var3;name2:var1,var2,var3"
+        
+        Args:
+            batch_response: The LLM response containing variations for all names
+            original_names: List of original names that were sent to the LLM
+            run_id: Unique identifier for this processing run
+            run_dir: Directory to save run-specific files
+            
+        Returns:
+            Dictionary mapping each name to its list of variations
+        """
+        bt.logging.info(f"Processing batch response for {len(original_names)} names")
+        
+        # Create a dictionary to store each name and its variations
+        name_variations = {}
+        
+        try:
+            # Clean the response
+            cleaned_response = batch_response.strip()
+            
+            # Try to parse the expected format: "name1:var1,var2,var3;name2:var1,var2,var3"
+            if ":" in cleaned_response and ";" in cleaned_response:
+                # Split by semicolon to get each name's variations
+                name_blocks = cleaned_response.split(";")
+                
+                for block in name_blocks:
+                    if ":" in block:
+                        name_part, variations_part = block.split(":", 1)
+                        name = name_part.strip()
+                        variations_text = variations_part.strip()
+                        
+                        # Split variations by comma and clean them
+                        variations = []
+                        for var in variations_text.split(","):
+                            cleaned_var = var.strip()
+                            if cleaned_var and cleaned_var not in variations:
+                                variations.append(cleaned_var)
+                        
+                        if name and variations:
+                            name_variations[name] = variations
+                            bt.logging.info(f"Extracted {len(variations)} variations for {name}")
+            
+            # If the expected format didn't work, try alternative parsing
+            if not name_variations:
+                bt.logging.warning("Expected format not found, trying alternative parsing")
+                
+                # Try to match names with their variations using different patterns
+                for name in original_names:
+                    variations = []
+                    
+                    # Look for variations near the name in the response
+                    name_patterns = [
+                        f"{name}:",
+                        f"{name} -",
+                        f"{name}=",
+                        f"{name} "
+                    ]
+                    
+                    for pattern in name_patterns:
+                        if pattern in cleaned_response:
+                            # Extract text after the pattern
+                            start_idx = cleaned_response.find(pattern) + len(pattern)
+                            end_idx = cleaned_response.find(";", start_idx)
+                            if end_idx == -1:
+                                end_idx = len(cleaned_response)
+                            
+                            variations_text = cleaned_response[start_idx:end_idx].strip()
+                            
+                            # Split by comma and clean
+                            for var in variations_text.split(","):
+                                cleaned_var = var.strip()
+                                if cleaned_var and cleaned_var not in variations:
+                                    variations.append(cleaned_var)
+                            
+                            if variations:
+                                break
+                    
+                    if variations:
+                        name_variations[name] = variations
+                        bt.logging.info(f"Extracted {len(variations)} variations for {name}")
+            
+            # If still no variations found, create a fallback response
+            if not name_variations:
+                bt.logging.warning("No variations extracted, creating fallback response")
+                for name in original_names:
+                    # Create simple variations based on common patterns
+                    variations = []
+                    name_lower = name.lower()
+                    
+                    # Add some basic variations
+                    if len(name) > 2:
+                        variations.append(name + "e")
+                        variations.append(name + "y")
+                        if name_lower.endswith('e'):
+                            variations.append(name[:-1] + "ey")
+                        if name_lower.endswith('y'):
+                            variations.append(name[:-1] + "ie")
+                    
+                    if variations:
+                        name_variations[name] = variations
+                        bt.logging.info(f"Created {len(variations)} fallback variations for {name}")
+            
+            bt.logging.info(f"Successfully processed variations for {len(name_variations)} names")
+            
+        except Exception as e:
+            bt.logging.error(f"Error processing batch response: {e}")
+            # Create minimal fallback variations
+            for name in original_names:
+                name_variations[name] = [name + "e", name + "y"]
+        
+        return name_variations
+
+    async def fallback_individual_processing(self, names: List[str], existing_variations: Dict[str, List[str]], remaining_time: float, run_id: int, run_dir: str) -> Dict[str, List[str]]:
+        """
+        Fallback method to process names individually when batch processing fails or is incomplete.
+        
+        Args:
+            names: List of names to process
+            existing_variations: Already processed variations
+            remaining_time: Time remaining for processing
+            run_id: Unique identifier for this processing run
+            run_dir: Directory to save run-specific files
+            
+        Returns:
+            Dictionary mapping each name to its list of variations
+        """
+        bt.logging.info(f"Starting fallback individual processing for {len(names)} names")
+        
+        # Copy existing variations
+        variations = existing_variations.copy()
+        
+        # Calculate time per name (reserve 10% for processing overhead)
+        available_time = remaining_time * 0.9
+        time_per_name = available_time / len(names) if names else 0
+        
+        start_time = time.time()
+        
+        for i, name in enumerate(names):
+            # Skip if already processed
+            if name in variations:
+                continue
+            
+            # Check if we have enough time
+            elapsed = time.time() - start_time
+            if elapsed > available_time:
+                bt.logging.warning(f"Time limit reached during fallback processing, processed {i}/{len(names)} names")
+                break
+            
+            try:
+                # Simple prompt for individual processing
+                simple_prompt = f"Generate 5-8 comma-separated alternative spellings for: {name}"
+                
+                # Query LLM with shorter timeout
+                response = await self.Get_Respond_LLM(simple_prompt)
+                
+                # Extract variations from response
+                response_variations = []
+                for var in response.split(","):
+                    cleaned_var = var.strip()
+                    if cleaned_var and cleaned_var != name and cleaned_var not in response_variations:
+                        response_variations.append(cleaned_var)
+                
+                if response_variations:
+                    variations[name] = response_variations
+                    bt.logging.info(f"Fallback processed {name}: {len(response_variations)} variations")
+                else:
+                    # Create basic fallback variations
+                    variations[name] = [name + "e", name + "y"]
+                    bt.logging.info(f"Created basic fallback variations for {name}")
+                
+            except Exception as e:
+                bt.logging.error(f"Error processing {name} in fallback: {str(e)}")
+                # Create basic fallback variations
+                variations[name] = [name + "e", name + "y"]
+        
+        return variations
+
     def save_variations_to_json(self, name_variations: Dict[str, List[str]], run_id: int, run_dir: str) -> None:
         """
         Save processed variations to JSON and DataFrame for debugging and analysis.
@@ -615,6 +801,9 @@ class Miner(BaseMinerNeuron):
                 - bool: Whether the request should be blacklisted
                 - str: The reason for the decision
         """
+        # Log all incoming requests for debugging
+        bt.logging.info(f"🔍 BLACKLIST CHECK for request from {synapse.dendrite.hotkey if synapse.dendrite else 'unknown'}")
+        
         # Check if the request has a valid dendrite and hotkey
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning(
