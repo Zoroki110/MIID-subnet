@@ -145,15 +145,14 @@ class Miner(BaseMinerNeuron):
             f"Provide {variation_count} variants for each name",
             "About half should sound similar and half should look similar",
             "Use a mix of vowel swap, consonant drop, and extra letter",
-            "Output format: name:var1,var2,...; name2:var1,var2,...",
-            "Respond only with the formatted list. Do not include explanations or extra text",
-            "Separate each name's output with a semicolon (;) and do not use new lines"
+            "Output format: name:var1,var2,...",
+            "Return one line per name with no extra text"
         ]
         instructions = " ".join(bp.rstrip('.').rstrip() + '.' for bp in bullet_points)
         names_text = ", ".join(names)
         example = (
             "Example:\n"
-            "alexander:aleksandr,alexandre,alexandar,alexandor,alexender,alixander,alexandyr,alecksander,alexandr,alexandru,alexandarh,alejander,alexannder; "
+            "alexander:aleksandr,alexandre,alexandar,alexandor,alexender,alixander,alexandyr,alecksander,alexandr,alexandru,alexandarh,alejander,alexannder\n"
             "sophia:sophiaa,sofia,soffia,sophiya,sophya,sofea,soffiya,soophia,sofiya,sophiah,sofiah,sophina,sopheeah"
         )
         return f"For these names: {names_text}\n{instructions}\n{example}"
@@ -234,8 +233,8 @@ class Miner(BaseMinerNeuron):
         """
         # Include a system prompt to enforce concise, formatted output
         system_prompt = (
-            "You generate alternative spellings only. "
-            "Respond with 'name:var1,var2,...;name2:var1,var2,...' and nothing else."
+            "Generate alternative spellings only. "
+            "Respond with lines formatted as 'name:var1,var2,...' and nothing else."
         )
 
         payload = {
@@ -376,8 +375,9 @@ class Miner(BaseMinerNeuron):
         Process a batch LLM response to extract name variations for all names at once.
         
         This function takes a single LLM response containing variations for multiple names
-        and extracts the variations for each name. It's designed to handle the simplified
-        batch format: "name1:var1,var2,var3;name2:var1,var2,var3"
+        and extracts the variations for each name. The preferred format is one line per
+        name in the form:
+        ``name:var1,var2,...``
         
         Args:
             batch_response: The LLM response containing variations for all names
@@ -389,16 +389,24 @@ class Miner(BaseMinerNeuron):
             Dictionary mapping each name to its list of variations
         """
         bt.logging.info(f"Processing batch response for {len(original_names)} names")
-        
+
         # Create a dictionary to store each name and its variations
         name_variations = {}
-        
+
         try:
             # Clean the response
             cleaned_response = batch_response.strip()
 
-            pattern = r"(.*?)\s*:\s*([^;\n]+)"
-            for name_part, variations_part in re.findall(pattern, cleaned_response):
+            # Split response on newlines or semicolons
+            lines = re.split(r"[;\n]+", cleaned_response)
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                if ":" not in line or line.count(",") < 2:
+                    bt.logging.warning(f"Ignoring malformed line: {line}")
+                    continue
+                name_part, variations_part = line.split(":", 1)
                 name = name_part.strip()
                 var_tokens = [v.strip() for v in variations_part.split(',') if v.strip()]
                 if name and var_tokens:

@@ -12,8 +12,8 @@ def create_dummy_miner():
 @pytest.mark.parametrize(
     "response,expected",
     [
-        ("alice:a1,a2;bob:b1,b2", {"alice": ["a1", "a2"], "bob": ["b1", "b2"]}),
-        ("alice:a1,a2;\nbob:b1,b2", {"alice": ["a1", "a2"], "bob": ["b1", "b2"]}),
+        ("alice:a1,a2\nbob:b1,b2", {"alice": ["a1", "a2"], "bob": ["b1", "b2"]}),
+        ("alice:a1,a2; bob:b1,b2", {"alice": ["a1", "a2"], "bob": ["b1", "b2"]}),
         ("1) alice - a1, a2; 2) bob - b1, b2", {"alice": ["a1", "a2"], "bob": ["b1", "b2"]}),
     ],
 )
