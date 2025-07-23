@@ -55,6 +55,7 @@ import aiohttp
 import pandas as pd
 import os
 import numpy as np
+import re
 from typing import List, Dict, Tuple, Any, Optional
 from tqdm import tqdm
 
@@ -382,31 +383,17 @@ class Miner(BaseMinerNeuron):
         try:
             # Clean the response
             cleaned_response = batch_response.strip()
-            
-            # Try to parse the expected format: "name1:var1,var2,var3;name2:var1,var2,var3"
-            if ":" in cleaned_response and ";" in cleaned_response:
-                # Split by semicolon to get each name's variations
-                name_blocks = cleaned_response.split(";")
-                
-                for block in name_blocks:
-                    if ":" in block:
-                        name_part, variations_part = block.split(":", 1)
-                        name = name_part.strip()
-                        variations_text = variations_part.strip()
-                        
-                        # Split variations by comma and clean them
-                        variations = []
-                        for var in variations_text.split(","):
-                            cleaned_var = var.strip()
-                            if cleaned_var and cleaned_var not in variations:
-                                variations.append(cleaned_var)
-                        
-                        if name and variations:
-                            cleaned = self.deduplicate_and_limit(name, variations)
-                            name_variations[name] = cleaned
-                            bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
-            
-            # If the expected format didn't work, try alternative parsing
+
+            pattern = r"(.*?)\s*:\s*([^;\n]+)"
+            for name_part, variations_part in re.findall(pattern, cleaned_response):
+                name = name_part.strip()
+                var_tokens = [v.strip() for v in variations_part.split(',') if v.strip()]
+                if name and var_tokens:
+                    cleaned = self.deduplicate_and_limit(name, var_tokens)
+                    name_variations[name] = cleaned
+                    bt.logging.info(f"Extracted {len(cleaned)} variations for {name}")
+
+            # If the regex did not produce results, try alternative parsing
             if not name_variations:
                 bt.logging.warning("Expected format not found, trying alternative parsing")
                 
