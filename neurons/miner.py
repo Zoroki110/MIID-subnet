@@ -124,10 +124,10 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"Mining results will be saved to: {self.output_path}")
 
         # Maximum number of names to query in a single LLM request. Large
-        # batches tend to produce truncated or malformed responses, so we
-        # split incoming requests into manageable chunks. The default can be
-        # overridden with the NAMES_PER_BATCH environment variable.
-        self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 8))
+        # batches can lead to truncated responses, so requests are split into
+        # manageable chunks. The default batch size is tuned for DeepSeek and
+        # can be overridden with the NAMES_PER_BATCH environment variable.
+        self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 15))
 
     def build_prompt(self, names: List[str]) -> str:
         """Create a concise prompt requesting 13 variations per name."""
@@ -222,14 +222,20 @@ class Miner(BaseMinerNeuron):
 
         This function sends a prompt to the remote LLM and returns its response.
         """
-        # Simplified prompt without verbose instructions
-        context_prompt = f"Generate alternative spellings: {prompt}"
+        # Include a system prompt to enforce concise, formatted output
+        system_prompt = (
+            "You generate alternative spellings only. "
+            "Respond with 'name:var1,var2,...;name2:var1,var2,...' and nothing else."
+        )
 
         payload = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": context_prompt}],
-            "max_tokens": 1000,  # Limit response length for faster processing
-            "temperature": 0.7,   # Add some creativity but not too much
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 1500,
+            "temperature": 0.7,
         }
 
         api_url = f"{self.api_base_url}/chat/completions"
