@@ -149,6 +149,13 @@ def add_miner_args(cls, parser):
     )
 
     parser.add_argument(
+        "--neuron.variation_count",
+        type=int,
+        help="Number of variations to generate for each name",
+        default=13,
+    )
+
+    parser.add_argument(
         "--neuron.ollama_url",
         type=str,
         help="Url to ollama",
