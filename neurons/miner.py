@@ -123,10 +123,9 @@ class Miner(BaseMinerNeuron):
         os.makedirs(self.output_path, exist_ok=True)
         bt.logging.info(f"Mining results will be saved to: {self.output_path}")
 
-        # Maximum number of names to query in a single LLM request. Large
-        # batches tend to produce truncated or malformed responses, so we
-        # split incoming requests into manageable chunks. The default can be
-        # overridden with the NAMES_PER_BATCH environment variable.
+        # batches can lead to truncated responses, so requests are split into
+        # manageable chunks. The default batch size is tuned for DeepSeek and
+        # can be overridden with the NAMES_PER_BATCH environment variable.
         self.names_per_batch = int(os.getenv("NAMES_PER_BATCH", 8))
 
     def build_prompt(self, names: List[str]) -> str:
@@ -193,15 +192,10 @@ class Miner(BaseMinerNeuron):
             return synapse
         
         try:
-            # Split the full request into smaller batches to avoid overly long
-            # prompts that can lead to truncated or malformed LLM responses.
             bt.logging.info(
                 f"Generating variations in batches of {self.names_per_batch} names"
             )
-
-            variations = await self.process_name_batches(synapse.names, run_id, run_dir)
-
-            # Store results back on the synapse
+            variations = await self.process_name_batches_with_fallback(synapse.names, run_id, run_dir)
             synapse.variations = variations
         except Exception as e:
             bt.logging.error(f"Error in batch processing: {str(e)}")
@@ -227,14 +221,20 @@ class Miner(BaseMinerNeuron):
 
         This function sends a prompt to the remote LLM and returns its response.
         """
-        # Simplified prompt without verbose instructions
-        context_prompt = f"Generate alternative spellings: {prompt}"
+        # Include a system prompt to enforce concise, formatted output
+        system_prompt = (
+            "You generate alternative spellings only. "
+            "Respond with 'name:var1,var2,...;name2:var1,var2,...' and nothing else."
+        )
 
         payload = {
             "model": self.model_name,
-            "messages": [{"role": "user", "content": context_prompt}],
-            "max_tokens": 1000,  # Limit response length for faster processing
-            "temperature": 0.7,   # Add some creativity but not too much
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 1500,
+            "temperature": 0.7,
         }
 
         api_url = f"{self.api_base_url}/chat/completions"
@@ -581,6 +581,59 @@ class Miner(BaseMinerNeuron):
                 variations.update(result)
 
         return variations
+
+    async def process_name_batches_with_fallback(self, names: List[str], run_id: int, run_dir: str) -> Dict[str, List[str]]:
+        """Process names in batches, retrying individually if batch fails or yields too few variations."""
+        tasks = []
+        batches = []
+        for i in range(0, len(names), self.names_per_batch):
+            batch = names[i : i + self.names_per_batch]
+            batches.append(batch)
+            tasks.append(self.process_single_batch_with_raw(batch, run_id, run_dir))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        variations: Dict[str, List[str]] = {}
+        for batch, (result, raw_response) in zip(batches, results):
+            if isinstance(result, Exception):
+                bt.logging.error(f"Batch failed: {result}")
+                for name in batch:
+                    variations[name] = await self.individual_with_fallback(name, run_id, run_dir)
+            else:
+                for name in batch:
+                    vars_for_name = result.get(name, [])
+                    if len(vars_for_name) < 13:
+                        bt.logging.warning(f"Name '{name}' got only {len(vars_for_name)} variations in batch, retrying individually.")
+                        variations[name] = await self.individual_with_fallback(name, run_id, run_dir)
+                    else:
+                        variations[name] = vars_for_name
+            # Log raw LLM response for debugging
+            bt.logging.debug(f"Raw LLM batch response: {raw_response}")
+        return variations
+
+    async def process_single_batch_with_raw(self, batch_names: List[str], run_id: int, run_dir: str):
+        """Like process_single_batch, but also returns the raw LLM response for logging."""
+        prompt = self.build_prompt(batch_names)
+        response = await self.Get_Respond_LLM(prompt)
+        variations = self.process_batch_response(response, batch_names, run_id, run_dir)
+        for name in batch_names:
+            if name not in variations:
+                variations[name] = []
+        return (variations, response)
+
+    async def individual_with_fallback(self, name: str, run_id: int, run_dir: str) -> List[str]:
+        """Try to get variations for a single name, fallback to deterministic if LLM fails."""
+        try:
+            prompt = self.build_prompt([name])
+            response = await self.Get_Respond_LLM(prompt)
+            vars_dict = self.process_batch_response(response, [name], run_id, run_dir)
+            vars_for_name = vars_dict.get(name, [])
+            if len(vars_for_name) < 13:
+                bt.logging.warning(f"Name '{name}' got only {len(vars_for_name)} variations individually, using fallback.")
+                return self.deduplicate_and_limit(name, vars_for_name)
+            return vars_for_name
+        except Exception as e:
+            bt.logging.error(f"Individual LLM call failed for '{name}': {e}")
+            return self.deduplicate_and_limit(name, [])
 
     def save_variations_to_json(self, name_variations: Dict[str, List[str]], run_id: int, run_dir: str) -> None:
         """
